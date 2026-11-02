@@ -1,0 +1,70 @@
+# Optional advanced add-ons for NetMonitor.
+# Use together with the basic compose file:
+#   docker compose -f docker-compose.yml -f docker-compose.advanced.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.advanced.yml --profile backup up -d
+#   docker compose -f docker-compose.yml -f docker-compose.advanced.yml --profile agent up -d
+
+services:
+  netmonitor:
+    ports:
+      - "${SNMP_TRAP_PORT:-162}:1620/udp"
+      - "${SYSLOG_PORT:-514}:5514/udp"
+      - "${AGENT_MTLS_PORT:-8443}:8443"
+    environment:
+      AGENT_TLS_ENABLED: ${AGENT_TLS_ENABLED:-false}
+      AGENT_TLS_ADDR: ":8443"
+      AGENT_TLS_CERT: /app/certs/server.crt
+      AGENT_TLS_KEY: /app/certs/server.key
+      AGENT_TLS_CA: /app/certs/ca.crt
+    volumes:
+      - ./deploy/certs:/app/certs:ro
+      - ./custom-icons:/usr/share/nginx/html/custom-icons:ro
+
+  netmonitor-backup:
+    image: timescale/timescaledb:latest-pg16
+    profiles: ["backup"]
+    restart: unless-stopped
+    depends_on:
+      netmonitor-db:
+        condition: service_healthy
+    environment:
+      PGHOST: netmonitor-db
+      PGUSER: ${POSTGRES_USER:-netmonitor}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      PGDATABASE: ${POSTGRES_DB:-netmonitor}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_VERIFY: ${BACKUP_VERIFY:-true}
+    volumes:
+      - ./deploy/backup:/scripts:ro
+      - backups:/backups
+    entrypoint: ["/bin/sh", "/scripts/backup.sh"]
+    networks:
+      - netmonitor-net
+
+  netmonitor-agent:
+    image: ghcr.io/alexmysterio/netmonitor:latest
+    entrypoint: ["/app/netmonitor-agent"]
+    profiles: ["agent"]
+    restart: unless-stopped
+    cap_add:
+      - NET_RAW
+    healthcheck:
+      disable: true
+    environment:
+      CORE_WS_URL: ${AGENT_CORE_WS_URL:-ws://netmonitor:8080/api/v1/agent/ws}
+      AGENT_TOKEN: ${AGENT_TOKEN:-}
+      AGENT_INSECURE_TLS: ${AGENT_INSECURE_TLS:-false}
+      AGENT_TLS_CERT: ${AGENT_TLS_CERT:-}
+      AGENT_TLS_KEY: ${AGENT_TLS_KEY:-}
+      AGENT_TLS_CA: ${AGENT_TLS_CA:-}
+      AGENT_TLS_SERVER_NAME: ${AGENT_TLS_SERVER_NAME:-netmonitor}
+      AGENT_UPDATE_PUBLIC_KEY: ${AGENT_UPDATE_PUBLIC_KEY:-}
+      TZ: ${TZ:-Europe/Madrid}
+    volumes:
+      - ./deploy/certs:/app/certs:ro
+    networks:
+      - netmonitor-net
+
+volumes:
+  backups:

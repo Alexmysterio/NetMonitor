@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+node_modules
+**/node_modules
+frontend/dist
+backend/netmonitor-core
+backend/netmonitor-agent
+deploy/certs
+backups
+pgdata
+redisdata
+reports/*
+map-backgrounds/*
+notification-sounds/*
+shots

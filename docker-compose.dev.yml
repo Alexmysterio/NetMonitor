@@ -1,0 +1,10 @@
+# Development helper: exposes DB/Redis on localhost so the Go backend can run
+# with `go run ./cmd/server` while the rest of the stack stays containerised.
+# Do not use this file in production.
+services:
+  netmonitor-db:
+    ports:
+      - "127.0.0.1:15432:5432"
+  netmonitor-redis:
+    ports:
+      - "127.0.0.1:16379:6379"

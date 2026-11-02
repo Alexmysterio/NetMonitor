@@ -1,0 +1,16 @@
+# Optional TLS front door. Use with:
+#   DOMAIN=monitor.example.com TLS_EMAIL=ops@example.com \
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls up -d
+#
+# For a local/self-signed certificate use TLS_EMAIL=internal.
+{$DOMAIN:localhost} {
+	tls {$TLS_EMAIL:internal}
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+	reverse_proxy netmonitor:80
+}

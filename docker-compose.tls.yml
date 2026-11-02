@@ -1,0 +1,25 @@
+services:
+  netmonitor-caddy:
+    image: caddy:2.8-alpine
+    container_name: netmonitor-caddy
+    restart: unless-stopped
+    profiles: ["tls"]
+    depends_on:
+      netmonitor:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      TLS_EMAIL: ${TLS_EMAIL:-internal}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - netmonitor-net
+
+volumes:
+  caddy_data:
+  caddy_config:
