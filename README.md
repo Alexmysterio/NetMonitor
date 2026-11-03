@@ -50,14 +50,7 @@ cd NetMonitor
 cp .env.example .env
 ```
 
-Edita `.env` y define valores aleatorios para:
-
-```env
-POSTGRES_PASSWORD=...
-JWT_SECRET=...
-ENCRYPTION_KEY=...
-ADMIN_PASSWORD=...
-```
+Edita `.env` y define valores aleatorios para `POSTGRES_PASSWORD`, `JWT_SECRET`, `ENCRYPTION_KEY` y `ADMIN_PASSWORD`. Más abajo tienes un `.env` de ejemplo listo para copiar.
 
 Puedes generarlos con OpenSSL:
 
@@ -96,20 +89,23 @@ La imagen se compila para `linux/amd64` y `linux/arm64`.
 
 El compose básico levanta PostgreSQL, Redis y una única imagen de NetMonitor, sin compilar nada. La aplicación (API, poller, frontend y nginx) corre en un solo contenedor; PostgreSQL y Redis se mantienen como servicios oficiales de infraestructura. El contenedor `netmonitor` solo recibe las variables imprescindibles; el resto se activa con el compose avanzado. Puedes copiar el compose tal cual en un archivo `docker-compose.yml`.
 
-Primero crea un `.env` en la misma carpeta:
+### Archivo `.env` de ejemplo
+
+Copia este contenido en un archivo `.env` y sustituye los cuatro valores `CAMBIA_ESTO`. `POSTGRES_DB` y `POSTGRES_USER` puedes dejarlos así:
 
 ```env
-POSTGRES_PASSWORD=cambia-esto
-JWT_SECRET=cambia-esto
-ENCRYPTION_KEY=cambia-esto
-ADMIN_PASSWORD=cambia-esto
-# Opcionales
+POSTGRES_DB=netmonitor
+POSTGRES_USER=netmonitor
+POSTGRES_PASSWORD=CAMBIA_ESTO
+JWT_SECRET=CAMBIA_ESTO
+ENCRYPTION_KEY=CAMBIA_ESTO
+ADMIN_PASSWORD=CAMBIA_ESTO
 SEED_DEMO=true
 HTTP_BIND=127.0.0.1
 HTTP_PORT=8080
 ```
 
-Genera los secretos con `openssl rand -hex 32` o con el comando de PowerShell de más arriba.
+Genera cada secreto con `openssl rand -hex 32` o con el comando de PowerShell de más arriba. El archivo completo con opciones avanzadas está en [`.env.example`](./.env.example).
 
 Después guarda este `docker-compose.yml`:
 
