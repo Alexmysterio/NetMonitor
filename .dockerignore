@@ -11,6 +11,7 @@ deploy/certs
 backups
 pgdata
 redisdata
+data
 reports/*
 map-backgrounds/*
 notification-sounds/*

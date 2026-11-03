@@ -15,11 +15,7 @@ services:
       TLS_EMAIL: ${TLS_EMAIL:-internal}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
     networks:
       - netmonitor-net
-
-volumes:
-  caddy_data:
-  caddy_config:

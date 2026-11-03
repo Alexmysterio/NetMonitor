@@ -50,7 +50,7 @@ services:
       BACKUP_VERIFY: ${BACKUP_VERIFY:-true}
     volumes:
       - ./deploy/backup:/scripts:ro
-      - backups:/backups
+      - ./data/backups:/backups
     entrypoint: ["/bin/sh", "/scripts/backup.sh"]
     networks:
       - netmonitor-net
@@ -78,6 +78,3 @@ services:
       - ./deploy/certs:/app/certs:ro
     networks:
       - netmonitor-net
-
-volumes:
-  backups:

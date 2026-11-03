@@ -107,6 +107,10 @@ HTTP_PORT=8080
 
 Genera cada secreto con `openssl rand -hex 32` o con el comando de PowerShell de más arriba. El archivo completo con opciones avanzadas está en [`.env.example`](./.env.example).
 
+Los datos persistentes quedan en `./data/postgres`, `./data/redis`, `./data/backups`, `./map-backgrounds`, `./notification-sounds` y `./reports`; no se usan volúmenes gestionados por Docker.
+
+Si vienes de una versión anterior con volúmenes Docker, copia `networkmonitor_pgdata`, `networkmonitor_redisdata` y `networkmonitor_backups` a `./data` antes de arrancar y no borres los volúmenes antiguos hasta comprobar la migración.
+
 Después guarda este `docker-compose.yml`:
 
 ```yaml
@@ -120,7 +124,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       TIMESCALEDB_TELEMETRY: "off"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     networks:
       - netmonitor-net
     healthcheck:
@@ -134,7 +138,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
     volumes:
-      - redisdata:/data
+      - ./data/redis:/data
     networks:
       - netmonitor-net
     healthcheck:
@@ -164,8 +168,9 @@ services:
     ports:
       - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:80"
     volumes:
-      - uploads:/app/uploads
-      - reports:/app/reports
+      - ./map-backgrounds:/app/uploads/map-backgrounds
+      - ./notification-sounds:/app/uploads/notification-sounds
+      - ./reports:/app/reports
     networks:
       - netmonitor-net
     healthcheck:
@@ -174,12 +179,6 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
-
-volumes:
-  pgdata:
-  redisdata:
-  uploads:
-  reports:
 
 networks:
   netmonitor-net:
@@ -261,7 +260,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Los backups se guardan en el volumen `backups` (`/backups` dentro del contenedor) y se verifica su restauración en una base temporal.
+Los backups se guardan en `./data/backups` (`/backups` dentro del contenedor) y se verifica su restauración en una base temporal.
 
 ### Rotación de `ENCRYPTION_KEY`
 

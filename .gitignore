@@ -7,6 +7,7 @@ backend/netmonitor-agent
 .DS_Store
 pgdata/
 redisdata/
+data/
 frontend/tsconfig.tsbuildinfo
 shots/
 deploy/certs/
