@@ -94,7 +94,7 @@ La imagen se publica automáticamente en GitHub Container Registry desde la rama
 
 La imagen se compila para `linux/amd64` y `linux/arm64`.
 
-El compose básico levanta PostgreSQL, Redis y una única imagen de NetMonitor, sin compilar nada. La aplicación (API, poller, frontend y nginx) corre en un solo contenedor; PostgreSQL y Redis se mantienen como servicios oficiales de infraestructura. Puedes copiar el compose tal cual en un archivo `docker-compose.yml`.
+El compose básico levanta PostgreSQL, Redis y una única imagen de NetMonitor, sin compilar nada. La aplicación (API, poller, frontend y nginx) corre en un solo contenedor; PostgreSQL y Redis se mantienen como servicios oficiales de infraestructura. El contenedor `netmonitor` solo recibe las variables imprescindibles; el resto se activa con el compose avanzado. Puedes copiar el compose tal cual en un archivo `docker-compose.yml`.
 
 Primero crea un `.env` en la misma carpeta:
 
