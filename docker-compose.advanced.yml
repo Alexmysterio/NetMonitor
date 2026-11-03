@@ -11,6 +11,12 @@ services:
       - "${SYSLOG_PORT:-514}:5514/udp"
       - "${AGENT_MTLS_PORT:-8443}:8443"
     environment:
+      TZ: ${TZ:-Europe/Madrid}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      POLLER_WORKERS: ${POLLER_WORKERS:-64}
+      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-30}
+      ALERT_MAX_PER_MINUTE: ${ALERT_MAX_PER_MINUTE:-120}
+      CORE_LEADER_ELECTION: ${CORE_LEADER_ELECTION:-false}
       AGENT_TLS_ENABLED: ${AGENT_TLS_ENABLED:-false}
       AGENT_TLS_ADDR: ":8443"
       AGENT_TLS_CERT: /app/certs/server.crt
@@ -19,6 +25,13 @@ services:
     volumes:
       - ./deploy/certs:/app/certs:ro
       - ./custom-icons:/usr/share/nginx/html/custom-icons:ro
+    sysctls:
+      - net.ipv4.ping_group_range=0 2147483647
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   netmonitor-backup:
     image: timescale/timescaledb:latest-pg16

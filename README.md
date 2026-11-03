@@ -157,28 +157,14 @@ services:
         condition: service_healthy
     cap_add:
       - NET_RAW
-    sysctls:
-      - net.ipv4.ping_group_range=0 2147483647
     environment:
       APP_ENV: production
-      TZ: ${TZ:-Europe/Madrid}
-      HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-netmonitor}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@netmonitor-db:5432/${POSTGRES_DB:-netmonitor}?sslmode=disable
       REDIS_URL: redis://netmonitor-redis:6379/0
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
-      ALLOW_INSECURE_DEFAULTS: ${ALLOW_INSECURE_DEFAULTS:-false}
       SEED_DEMO: ${SEED_DEMO:-true}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
-      MAP_BACKGROUND_DIR: /app/uploads/map-backgrounds
-      NOTIFICATION_SOUND_DIR: /app/uploads/notification-sounds
-      REPORT_DIR: /app/reports
-      POLLER_WORKERS: ${POLLER_WORKERS:-64}
-      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-30}
-      ALERT_MAX_PER_MINUTE: ${ALERT_MAX_PER_MINUTE:-120}
-      CORE_LEADER_ELECTION: ${CORE_LEADER_ELECTION:-false}
     ports:
       - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:80"
     volumes:
@@ -192,11 +178,6 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
 
 volumes:
   pgdata:
@@ -257,14 +238,14 @@ Toda la configuración se pasa por variables de entorno. Las principales:
 | `ADMIN_USERNAME` | Usuario inicial | `admin` |
 | `ADMIN_PASSWORD` | Contraseña inicial | Cambiar obligatoriamente |
 | `SEED_DEMO` | Crea datos de demostración al inicio | `true` |
-| `PUBLIC_URL` | URL pública para botones de Telegram | `http://localhost:8080` |
+| `PUBLIC_URL` | URL pública para botones de Telegram (avanzado) | `http://localhost:8080` |
 | `SNMP_TRAP_PORT` | Puerto UDP de traps en el host (avanzado) | `162` |
 | `SYSLOG_PORT` | Puerto UDP de Syslog en el host (avanzado) | `514` |
 | `BACKUP_INTERVAL_HOURS` | Frecuencia de backup (avanzado) | `24` |
 | `BACKUP_RETENTION_DAYS` | Retención de backups (avanzado) | `14` |
-| `CORE_LEADER_ELECTION` | Activa elección de líder para HA | `false` |
+| `CORE_LEADER_ELECTION` | Activa elección de líder para HA (avanzado) | `false` |
 
-El resto de opciones está documentado en `.env.example`.
+El resto de opciones está documentado en `.env.example`. Las variables de ajuste `TZ`, `PUBLIC_URL`, `POLLER_WORKERS`, `POLL_INTERVAL_SEC`, `ALERT_MAX_PER_MINUTE` y `CORE_LEADER_ELECTION` se aplican con `docker-compose.advanced.yml`.
 
 ## Operación
 
