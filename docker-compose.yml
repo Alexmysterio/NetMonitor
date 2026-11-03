@@ -46,6 +46,7 @@ services:
         condition: service_healthy
     cap_add:
       - NET_RAW
+      - NET_ADMIN
     environment:
       APP_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@netmonitor-db:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}?sslmode=disable
@@ -54,6 +55,9 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       SEED_DEMO: ${SEED_DEMO:?Set SEED_DEMO in .env}
+      PRIVATE_ROUTE_GATEWAY: ${PRIVATE_ROUTE_GATEWAY?Set PRIVATE_ROUTE_GATEWAY in .env (empty disables)}
+      PRIVATE_ROUTE_DEV: ${PRIVATE_ROUTE_DEV?Set PRIVATE_ROUTE_DEV in .env (empty autodetects)}
+      PRIVATE_ROUTES: ${PRIVATE_ROUTES?Set PRIVATE_ROUTES in .env}
     ports:
       - "${HTTP_BIND:?Set HTTP_BIND in .env}:${HTTP_PORT:?Set HTTP_PORT in .env}:80"
     volumes:

@@ -109,6 +109,12 @@ SEED_DEMO=true
 TZ=Europe/Madrid
 PUBLIC_URL=http://localhost:8080
 
+# Rutas hacia redes privadas (RFC1918) desde la interfaz LAN del contenedor.
+# Deja el gateway vacío para mantener el enrutado por defecto de Docker.
+PRIVATE_ROUTE_GATEWAY=
+PRIVATE_ROUTE_DEV=
+PRIVATE_ROUTES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+
 SNMP_TRAP_PORT=162
 SYSLOG_PORT=514
 AGENT_MTLS_PORT=8443
@@ -187,6 +193,7 @@ services:
         condition: service_healthy
     cap_add:
       - NET_RAW
+      - NET_ADMIN
     environment:
       APP_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@netmonitor-db:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}?sslmode=disable
@@ -195,6 +202,9 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       SEED_DEMO: ${SEED_DEMO:?Set SEED_DEMO in .env}
+      PRIVATE_ROUTE_GATEWAY: ${PRIVATE_ROUTE_GATEWAY?Set PRIVATE_ROUTE_GATEWAY in .env (empty disables)}
+      PRIVATE_ROUTE_DEV: ${PRIVATE_ROUTE_DEV?Set PRIVATE_ROUTE_DEV in .env (empty autodetects)}
+      PRIVATE_ROUTES: ${PRIVATE_ROUTES?Set PRIVATE_ROUTES in .env}
     ports:
       - "${HTTP_BIND:?Set HTTP_BIND in .env}:${HTTP_PORT:?Set HTTP_PORT in .env}:80"
     volumes:
@@ -233,6 +243,64 @@ docker pull ghcr.io/alexmysterio/netmonitor:latest
 
 La imagen `netmonitor:latest` está publicada como pública: no necesitas iniciar sesión en GHCR para descargarla.
 
+### Rutas a redes privadas
+
+Por defecto el contenedor solo conoce la red bridge de Docker y usa su gateway para todo. Para que el descubrimiento y el polling alcancen la LAN/VPN aunque el host tenga rutas distintas, NetMonitor puede enviar todo el tráfico RFC1918 por el gateway de una segunda interfaz:
+
+```env
+PRIVATE_ROUTE_GATEWAY=10.240.1.1
+PRIVATE_ROUTE_DEV=eth0
+PRIVATE_ROUTES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+- `PRIVATE_ROUTE_GATEWAY`: gateway de la red LAN/VPN conectada al contenedor. Si se deja vacío, no se toca el enrutado y todo sigue saliendo por Docker.
+- `PRIVATE_ROUTE_DEV`: interfaz del contenedor. Si se deja vacío, se detecta a partir de la ruta directa al gateway.
+- `PRIVATE_ROUTES`: CIDR separados por comas o espacios. Por defecto, las tres redes privadas RFC1918.
+
+El contenedor necesita `NET_ADMIN` (ya está en el compose básico) para aplicar las rutas. La ruta por defecto a Internet no cambia: sigue saliendo por el gateway de Docker. Las rutas propias de Docker (`172.x.0.0/16`, DNS, PostgreSQL, Redis) son más específicas y siguen funcionando.
+
+La segunda interfaz debe existir en el contenedor. Si no la tienes definida en tu compose, usa el overlay [`docker-compose.lan.yml`](./docker-compose.lan.yml), que adjunta una red externa y mantiene el gateway de Docker como ruta por defecto (`gw_priority`).
+
+En Linux con acceso directo a la interfaz de la LAN/VPN, crea una red macvlan:
+
+```bash
+docker network create -d macvlan \
+  --subnet=10.240.1.0/24 \
+  --gateway=10.240.1.1 \
+  -o parent=eth0 netmonitor-lan
+```
+
+En Docker Desktop/Windows, o cuando el host ya enruta hacia `10.240.1.0/24`, una red bridge con esa subred también sirve; el contenedor sale por el host y este aplica su ruta:
+
+```bash
+docker network create \
+  --subnet=10.240.1.0/24 \
+  --gateway=10.240.1.1 \
+  netmonitor-lan
+```
+
+Después define la red y la IP del contenedor:
+
+```env
+LAN_NETWORK=netmonitor-lan
+LAN_IPV4=10.240.1.2
+```
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
+```
+
+Ajusta `parent`, `subnet` y la IP a tu servidor. Si tu versión de Docker no soporta `gw_priority`, el gateway de la red LAN podría pasar a ser el predeterminado; en ese caso actualiza Docker o mantén la red LAN con salida a Internet.
+
+Comprueba:
+
+```bash
+docker compose exec netmonitor ip route get 10.255.2.1
+docker compose exec netmonitor ping -c 2 10.255.2.1
+```
+
+Debe mostrar `via 10.240.1.1 dev eth0` (o `dev eth1`, según el orden de interfaces). Si aparece `Operation not permitted`, falta `NET_ADMIN`; si aparece un aviso de gateway no conectado, el contenedor no está unido a la red `10.240.1.0/24`.
+
 El compose básico no incluye backups, agente remoto, traps/Syslog publicados, iconos personalizados ni TLS/mTLS. Esas piezas están en archivos opcionales para que cada usuario elija. El overlay principal es [`docker-compose.advanced.yml`](./docker-compose.advanced.yml):
 
 ```bash
@@ -257,6 +325,11 @@ Toda la configuración se pasa por variables de entorno. Las principales:
 | :--- | :--- | :--- |
 | `HTTP_BIND` | Interfaz donde se publica la web | `127.0.0.1` |
 | `HTTP_PORT` | Puerto HTTP publicado | `8080` |
+| `PRIVATE_ROUTE_GATEWAY` | Gateway LAN/VPN para el tráfico RFC1918; vacío lo desactiva | Vacío |
+| `PRIVATE_ROUTE_DEV` | Interfaz del contenedor; vacío la autodetecta | Vacío |
+| `PRIVATE_ROUTES` | CIDR privados que usan ese gateway | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` |
+| `LAN_NETWORK` | Red externa del overlay `docker-compose.lan.yml` | `netmonitor-lan` |
+| `LAN_IPV4` | IP fija del contenedor en esa red | `10.240.1.2` |
 | `POSTGRES_PASSWORD` | Contraseña de PostgreSQL | Cambiar obligatoriamente |
 | `JWT_SECRET` | Firma de sesiones JWT | Cambiar obligatoriamente |
 | `ENCRYPTION_KEY` | Clave de cifrado en reposo | Cambiar obligatoriamente |
