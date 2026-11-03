@@ -91,21 +91,50 @@ El compose básico levanta PostgreSQL, Redis y una única imagen de NetMonitor, 
 
 ### Archivo `.env` de ejemplo
 
-Copia este contenido en un archivo `.env` y sustituye los cuatro valores `CAMBIA_ESTO`. `POSTGRES_DB` y `POSTGRES_USER` puedes dejarlos así:
+Todas las variables que usa el compose están definidas aquí; no hay valores por defecto ocultos. Cambia los cuatro valores `CAMBIA_ESTO` y ajusta lo que necesites. `POSTGRES_DB` y `POSTGRES_USER` puedes dejarlos así:
 
 ```env
 POSTGRES_DB=netmonitor
 POSTGRES_USER=netmonitor
 POSTGRES_PASSWORD=CAMBIA_ESTO
+
 JWT_SECRET=CAMBIA_ESTO
 ENCRYPTION_KEY=CAMBIA_ESTO
 ADMIN_PASSWORD=CAMBIA_ESTO
-SEED_DEMO=true
+
 HTTP_BIND=127.0.0.1
 HTTP_PORT=8080
+SEED_DEMO=true
+TZ=Europe/Madrid
+PUBLIC_URL=http://localhost:8080
+
+SNMP_TRAP_PORT=162
+SYSLOG_PORT=514
+AGENT_MTLS_PORT=8443
+POLLER_WORKERS=64
+POLL_INTERVAL_SEC=30
+ALERT_MAX_PER_MINUTE=120
+CORE_LEADER_ELECTION=false
+
+BACKUP_INTERVAL_HOURS=24
+BACKUP_RETENTION_DAYS=14
+BACKUP_VERIFY=true
+
+DOMAIN=localhost
+TLS_EMAIL=internal
+
+AGENT_TOKEN=
+AGENT_CORE_WS_URL=ws://netmonitor:8080/api/v1/agent/ws
+AGENT_INSECURE_TLS=false
+AGENT_TLS_ENABLED=false
+AGENT_TLS_SERVER_NAME=netmonitor
+AGENT_TLS_CERT=
+AGENT_TLS_KEY=
+AGENT_TLS_CA=
+AGENT_UPDATE_PUBLIC_KEY=
 ```
 
-Genera cada secreto con `openssl rand -hex 32` o con el comando de PowerShell de más arriba. El archivo completo con opciones avanzadas está en [`.env.example`](./.env.example).
+Genera cada secreto con `openssl rand -hex 32` o con el comando de PowerShell de más arriba. El archivo completo con opciones adicionales está en [`.env.example`](./.env.example).
 
 Los datos persistentes quedan en `./data/postgres`, `./data/redis`, `./data/backups`, `./map-backgrounds`, `./notification-sounds` y `./reports`; no se usan volúmenes gestionados por Docker.
 
@@ -119,8 +148,8 @@ services:
     image: timescale/timescaledb:latest-pg16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-netmonitor}
-      POSTGRES_USER: ${POSTGRES_USER:-netmonitor}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       TIMESCALEDB_TELEMETRY: "off"
     volumes:
@@ -128,7 +157,7 @@ services:
     networks:
       - netmonitor-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-netmonitor} -d ${POSTGRES_DB:-netmonitor}"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -159,14 +188,14 @@ services:
       - NET_RAW
     environment:
       APP_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER:-netmonitor}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@netmonitor-db:5432/${POSTGRES_DB:-netmonitor}?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@netmonitor-db:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}?sslmode=disable
       REDIS_URL: redis://netmonitor-redis:6379/0
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
-      SEED_DEMO: ${SEED_DEMO:-true}
+      SEED_DEMO: ${SEED_DEMO:?Set SEED_DEMO in .env}
     ports:
-      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:80"
+      - "${HTTP_BIND:?Set HTTP_BIND in .env}:${HTTP_PORT:?Set HTTP_PORT in .env}:80"
     volumes:
       - ./map-backgrounds:/app/uploads/map-backgrounds
       - ./notification-sounds:/app/uploads/notification-sounds

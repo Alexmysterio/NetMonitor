@@ -7,17 +7,17 @@
 services:
   netmonitor:
     ports:
-      - "${SNMP_TRAP_PORT:-162}:1620/udp"
-      - "${SYSLOG_PORT:-514}:5514/udp"
-      - "${AGENT_MTLS_PORT:-8443}:8443"
+      - "${SNMP_TRAP_PORT:?Set SNMP_TRAP_PORT in .env}:1620/udp"
+      - "${SYSLOG_PORT:?Set SYSLOG_PORT in .env}:5514/udp"
+      - "${AGENT_MTLS_PORT:?Set AGENT_MTLS_PORT in .env}:8443"
     environment:
-      TZ: ${TZ:-Europe/Madrid}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
-      POLLER_WORKERS: ${POLLER_WORKERS:-64}
-      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-30}
-      ALERT_MAX_PER_MINUTE: ${ALERT_MAX_PER_MINUTE:-120}
-      CORE_LEADER_ELECTION: ${CORE_LEADER_ELECTION:-false}
-      AGENT_TLS_ENABLED: ${AGENT_TLS_ENABLED:-false}
+      TZ: ${TZ:?Set TZ in .env}
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      POLLER_WORKERS: ${POLLER_WORKERS:?Set POLLER_WORKERS in .env}
+      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:?Set POLL_INTERVAL_SEC in .env}
+      ALERT_MAX_PER_MINUTE: ${ALERT_MAX_PER_MINUTE:?Set ALERT_MAX_PER_MINUTE in .env}
+      CORE_LEADER_ELECTION: ${CORE_LEADER_ELECTION:?Set CORE_LEADER_ELECTION in .env}
+      AGENT_TLS_ENABLED: ${AGENT_TLS_ENABLED:?Set AGENT_TLS_ENABLED in .env}
       AGENT_TLS_ADDR: ":8443"
       AGENT_TLS_CERT: /app/certs/server.crt
       AGENT_TLS_KEY: /app/certs/server.key
@@ -42,12 +42,12 @@ services:
         condition: service_healthy
     environment:
       PGHOST: netmonitor-db
-      PGUSER: ${POSTGRES_USER:-netmonitor}
+      PGUSER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      PGDATABASE: ${POSTGRES_DB:-netmonitor}
-      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
-      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
-      BACKUP_VERIFY: ${BACKUP_VERIFY:-true}
+      PGDATABASE: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:?Set BACKUP_INTERVAL_HOURS in .env}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:?Set BACKUP_RETENTION_DAYS in .env}
+      BACKUP_VERIFY: ${BACKUP_VERIFY:?Set BACKUP_VERIFY in .env}
     volumes:
       - ./deploy/backup:/scripts:ro
       - ./data/backups:/backups
@@ -65,15 +65,15 @@ services:
     healthcheck:
       disable: true
     environment:
-      CORE_WS_URL: ${AGENT_CORE_WS_URL:-ws://netmonitor:8080/api/v1/agent/ws}
-      AGENT_TOKEN: ${AGENT_TOKEN:-}
-      AGENT_INSECURE_TLS: ${AGENT_INSECURE_TLS:-false}
-      AGENT_TLS_CERT: ${AGENT_TLS_CERT:-}
-      AGENT_TLS_KEY: ${AGENT_TLS_KEY:-}
-      AGENT_TLS_CA: ${AGENT_TLS_CA:-}
-      AGENT_TLS_SERVER_NAME: ${AGENT_TLS_SERVER_NAME:-netmonitor}
-      AGENT_UPDATE_PUBLIC_KEY: ${AGENT_UPDATE_PUBLIC_KEY:-}
-      TZ: ${TZ:-Europe/Madrid}
+      CORE_WS_URL: ${AGENT_CORE_WS_URL:?Set AGENT_CORE_WS_URL in .env}
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      AGENT_INSECURE_TLS: ${AGENT_INSECURE_TLS:?Set AGENT_INSECURE_TLS in .env}
+      AGENT_TLS_CERT: ${AGENT_TLS_CERT}
+      AGENT_TLS_KEY: ${AGENT_TLS_KEY}
+      AGENT_TLS_CA: ${AGENT_TLS_CA}
+      AGENT_TLS_SERVER_NAME: ${AGENT_TLS_SERVER_NAME:?Set AGENT_TLS_SERVER_NAME in .env}
+      AGENT_UPDATE_PUBLIC_KEY: ${AGENT_UPDATE_PUBLIC_KEY}
+      TZ: ${TZ:?Set TZ in .env}
     volumes:
       - ./deploy/certs:/app/certs:ro
     networks:
