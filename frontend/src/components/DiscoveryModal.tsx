@@ -15,6 +15,7 @@ interface Found {
   existing_device_name: string
   existing_device_ip: string
   ip_mismatch: boolean
+  method: string
 }
 
 export default function DiscoveryModal({
@@ -176,7 +177,7 @@ export default function DiscoveryModal({
         <Field label="Rangos CIDR" hint="Puedes separar varios rangos con comas. Máximo 65.536 direcciones por barrido; para redes mayores, divide en segmentos.">
           <input className="input mono" value={cidr} onChange={e => setCidr(e.target.value)} placeholder="10.20.0.0/16, 192.168.1.0/24" />
         </Field>
-        <Field label="Perfiles SNMP (máx. 3)" hint="Se prueban en orden hasta identificar el equipo. Sin perfiles, solo ICMP.">
+        <Field label="Perfiles SNMP (máx. 3)" hint="Se prueban en orden. Si el equipo no responde a ICMP, se intenta SNMP y puertos comunes.">
           <div className="profile-checks">
             {!profiles.length && <span className="muted small">Sin perfiles SNMP</span>}
             {profiles.map(p => (
@@ -209,7 +210,7 @@ export default function DiscoveryModal({
                 <span className="discovery-icon"><Server size={15} /></span>
                 <span className="discovery-info">
                   <b>{r.name || `Host ${r.ip}`}</b>
-                  <small>{r.sys_descr || 'Sin SNMP · solo ICMP'} {r.sys_object_id ? `· ${r.sys_object_id}` : ''}</small>
+                  <small>{r.sys_descr || (r.method === 'tcp' ? 'Detectado por TCP' : r.method === 'snmp' ? 'Detectado por SNMP' : 'Sin SNMP · solo ICMP')} {r.sys_object_id ? `· ${r.sys_object_id}` : ''}</small>
                 </span>
                 <span className="mono discovery-ip">{r.ip}</span>
                 <span className="discovery-latency">{r.latency_ms.toFixed(1)} ms</span>

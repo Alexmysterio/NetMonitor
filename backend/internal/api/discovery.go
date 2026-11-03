@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ type discoveryResult struct {
 	ExistingDeviceName string  `json:"existing_device_name"`
 	ExistingDeviceIP   string  `json:"existing_device_ip"`
 	IPMismatch         bool    `json:"ip_mismatch"`
+	Method             string  `json:"method,omitempty"`
 }
 
 // discoveryScan performs a bounded sweep over one or more IPv4 CIDRs. Small
@@ -94,8 +96,9 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mode := "reliable"
-	workers := 40
-	scanTimeout := 30 * time.Second
+	workers := 64
+	scanTimeout := 2 * time.Minute
+	tcpFallback := len(ips) <= 256
 	if len(ips) > 512 {
 		mode = "fast"
 		workers = 256
@@ -121,7 +124,7 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer wg.Done()
 			for item := range jobs {
-				done <- indexed{idx: item.idx, res: probeHost(ctx, item.ip, profiles, mode)}
+				done <- indexed{idx: item.idx, res: probeHost(ctx, item.ip, profiles, mode, tcpFallback)}
 			}
 		}()
 	}
@@ -196,7 +199,7 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": out})
 }
 
-func probeHost(ctx context.Context, ip string, profiles []snmpProfileRow, mode string) discoveryResult {
+func probeHost(ctx context.Context, ip string, profiles []snmpProfileRow, mode string, tcpFallback bool) discoveryResult {
 	res := discoveryResult{IP: ip, Name: ip, NameSource: "ip"}
 	count, timeout := 1, 800*time.Millisecond
 	if strings.EqualFold(mode, "reliable") {
@@ -205,34 +208,21 @@ func probeHost(ctx context.Context, ip string, profiles []snmpProfileRow, mode s
 		count, timeout = 1, 700*time.Millisecond
 	}
 	pinger, err := probing.NewPinger(ip)
-	if err != nil {
-		return res
+	if err == nil {
+		pinger.Count = count
+		pinger.Timeout = timeout
+		pinger.Interval = 50 * time.Millisecond
+		pinger.SetPrivileged(true)
+		if err := pinger.Run(); err == nil {
+			st := pinger.Statistics()
+			if st.PacketsRecv > 0 {
+				res.Alive = true
+				res.Method = "icmp"
+				res.LatencyMS = float64(st.AvgRtt.Microseconds()) / 1000
+			}
+		}
 	}
-	pinger.Count = count
-	pinger.Timeout = timeout
-	pinger.Interval = 50 * time.Millisecond
-	pinger.SetPrivileged(true)
-	if err := pinger.Run(); err != nil {
-		return res
-	}
-	st := pinger.Statistics()
-	if st.PacketsRecv == 0 {
-		return res
-	}
-	res.Alive = true
-	res.LatencyMS = float64(st.AvgRtt.Microseconds()) / 1000
 
-	// Name preference: DNS (PTR) → SNMP sysName → IP.
-	dnsCtx, cancel := context.WithTimeout(ctx, 650*time.Millisecond)
-	if names, err := net.DefaultResolver.LookupAddr(dnsCtx, ip); err == nil && len(names) > 0 {
-		res.Name = strings.TrimSuffix(names[0], ".")
-		res.NameSource = "dns"
-	}
-	cancel()
-
-	if len(profiles) == 0 {
-		return res
-	}
 	retries := 0
 	if strings.EqualFold(mode, "reliable") {
 		retries = 1
@@ -241,17 +231,69 @@ func probeHost(ctx context.Context, ip string, profiles []snmpProfileRow, mode s
 	if snmpTimeout < 1500*time.Millisecond {
 		snmpTimeout = 1500 * time.Millisecond
 	}
-	for i := range profiles {
-		select {
-		case <-ctx.Done():
-			return res
-		default:
+	// Some network devices block ICMP but answer SNMP. Try the selected
+	// profiles as a discovery fallback before declaring the host absent.
+	snmpTried := false
+	if !res.Alive && len(profiles) > 0 {
+		snmpTried = true
+		for i := range profiles {
+			select {
+			case <-ctx.Done():
+				return res
+			default:
+			}
+			if probeSNMP(ctx, ip, &profiles[i], retries, snmpTimeout, &res) {
+				res.Alive = true
+				res.Method = "snmp"
+				break
+			}
 		}
-		if probeSNMP(ctx, ip, &profiles[i], retries, snmpTimeout, &res) {
-			break
+	}
+	if !res.Alive && tcpFallback && probeTCP(ctx, ip, 300*time.Millisecond) {
+		res.Alive = true
+		res.Method = "tcp"
+	}
+	if !res.Alive {
+		return res
+	}
+
+	// Name preference: DNS (PTR) → SNMP sysName → IP.
+	if res.NameSource == "ip" || res.NameSource == "snmp" {
+		dnsCtx, cancel := context.WithTimeout(ctx, 650*time.Millisecond)
+		if names, err := net.DefaultResolver.LookupAddr(dnsCtx, ip); err == nil && len(names) > 0 {
+			res.Name = strings.TrimSuffix(names[0], ".")
+			res.NameSource = "dns"
+		}
+		cancel()
+	}
+
+	// If the host answered ICMP/TCP, use SNMP to identify it.
+	if !snmpTried && len(profiles) > 0 {
+		for i := range profiles {
+			select {
+			case <-ctx.Done():
+				return res
+			default:
+			}
+			if probeSNMP(ctx, ip, &profiles[i], retries, snmpTimeout, &res) {
+				break
+			}
 		}
 	}
 	return res
+}
+
+func probeTCP(ctx context.Context, ip string, timeout time.Duration) bool {
+	ports := []int{22, 23, 80, 443, 3389, 8080, 8291, 8443, 9100}
+	for _, port := range ports {
+		dialer := net.Dialer{Timeout: timeout}
+		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+	}
+	return false
 }
 
 func probeSNMP(ctx context.Context, ip string, profile *snmpProfileRow, retries int, timeout time.Duration, res *discoveryResult) bool {

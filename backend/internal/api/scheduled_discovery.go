@@ -265,7 +265,7 @@ spawn:
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := probeHost(scanCtx, ip, profiles, mode)
+			res := probeHost(scanCtx, ip, profiles, mode, len(ips) <= 256)
 			if res.Alive {
 				mu.Lock()
 				results = append(results, res)
