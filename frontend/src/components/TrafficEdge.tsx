@@ -45,7 +45,8 @@ function TrafficEdge({ id, data, selected, sourceX, sourceY, targetX, targetY, s
   }
 
   const down = link.status === 'down'
-  const label = link.rendered_label || (down ? 'LINK DOWN' : '')
+  const simple = link.mastering_type === 'simple'
+  const label = down ? 'LINK DOWN' : (link.rendered_label || (simple ? 'Enlace simple' : ''))
   const showLabel = label && (selected || hover || down || zoom >= 1.12 || link.utilization_level !== 'normal' || (showAllSnmp && link.mastering_type === 'snmp' && link.snmp_if_index > 0))
 
   return (

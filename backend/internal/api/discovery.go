@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gosnmp/gosnmp"
+	"github.com/netmonitor/netmonitor/internal/auth"
 	"github.com/netmonitor/netmonitor/internal/secure"
 	probing "github.com/prometheus-community/pro-bing"
 )
@@ -18,14 +19,17 @@ import (
 const maxDiscoveryHosts = 65536
 
 type discoveryResult struct {
-	IP             string  `json:"ip"`
-	Alive          bool    `json:"alive"`
-	Name           string  `json:"name"`
-	NameSource     string  `json:"name_source"`
-	SysDescr       string  `json:"sys_descr"`
-	SysObjectID    string  `json:"sys_object_id"`
-	LatencyMS      float64 `json:"latency_ms"`
-	ExistingDevice string  `json:"existing_device_id"`
+	IP                 string  `json:"ip"`
+	Alive              bool    `json:"alive"`
+	Name               string  `json:"name"`
+	NameSource         string  `json:"name_source"`
+	SysDescr           string  `json:"sys_descr"`
+	SysObjectID        string  `json:"sys_object_id"`
+	LatencyMS          float64 `json:"latency_ms"`
+	ExistingDevice     string  `json:"existing_device_id"`
+	ExistingDeviceName string  `json:"existing_device_name"`
+	ExistingDeviceIP   string  `json:"existing_device_ip"`
+	IPMismatch         bool    `json:"ip_mismatch"`
 }
 
 // discoveryScan performs a bounded sweep over one or more IPv4 CIDRs. Small
@@ -33,8 +37,9 @@ type discoveryResult struct {
 // faster probe mode and more workers, up to maxDiscoveryHosts.
 func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CIDR          string `json:"cidr"`
-		SNMPProfileID string `json:"snmp_profile_id"`
+		CIDR           string   `json:"cidr"`
+		SNMPProfileID  string   `json:"snmp_profile_id"`
+		SNMPProfileIDs []string `json:"snmp_profile_ids"`
 	}
 	if err := decodeBody(r, &req); err != nil || strings.TrimSpace(req.CIDR) == "" {
 		writeError(w, http.StatusBadRequest, "cidr is required")
@@ -64,12 +69,28 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var profile *snmpProfileRow
-	if req.SNMPProfileID != "" {
-		p, err := s.profileByID(r.Context(), req.SNMPProfileID)
-		if err == nil {
-			profile = &p
+	profileIDs := req.SNMPProfileIDs
+	if len(profileIDs) == 0 && req.SNMPProfileID != "" {
+		profileIDs = []string{req.SNMPProfileID}
+	}
+	if len(profileIDs) > 3 {
+		writeError(w, http.StatusBadRequest, "máximo 3 perfiles SNMP por descubrimiento")
+		return
+	}
+	profiles := []snmpProfileRow{}
+	seenProfiles := map[string]bool{}
+	for _, id := range profileIDs {
+		id = strings.TrimSpace(id)
+		if id == "" || seenProfiles[id] {
+			continue
 		}
+		seenProfiles[id] = true
+		p, err := s.profileByID(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "perfil SNMP no encontrado")
+			return
+		}
+		profiles = append(profiles, p)
 	}
 
 	mode := "reliable"
@@ -100,7 +121,7 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer wg.Done()
 			for item := range jobs {
-				done <- indexed{idx: item.idx, res: probeHost(ctx, item.ip, profile, mode)}
+				done <- indexed{idx: item.idx, res: probeHost(ctx, item.ip, profiles, mode)}
 			}
 		}()
 	}
@@ -123,14 +144,47 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich existing devices with their DB UUID so the UI can add references
-	// instead of creating duplicate rows.
+	// instead of creating duplicate rows. If the same name exists under a
+	// different IP, flag it so the UI can offer an address update.
+	user, _ := auth.UserFrom(r.Context())
 	for i := range results {
 		if !results[i].Alive {
 			continue
 		}
-		var id string
-		if err := s.pool.QueryRow(r.Context(), `SELECT id::text FROM devices WHERE host(primary_ip)=$1 LIMIT 1`, results[i].IP).Scan(&id); err == nil {
+		var id, name, existingIP string
+		err := s.pool.QueryRow(r.Context(), `
+			SELECT id::text, name, host(primary_ip)
+			FROM devices WHERE host(primary_ip)=$1 LIMIT 1
+		`, results[i].IP).Scan(&id, &name, &existingIP)
+		if err == nil {
+			if !s.canAccessDevice(r.Context(), user, id) {
+				continue
+			}
 			results[i].ExistingDevice = id
+			results[i].ExistingDeviceName = name
+			results[i].ExistingDeviceIP = existingIP
+			continue
+		}
+		if results[i].Name == "" || results[i].Name == results[i].IP {
+			continue
+		}
+		err = s.pool.QueryRow(r.Context(), `
+			SELECT id::text, name, host(primary_ip)
+			FROM devices
+			WHERE lower(name)=lower($1)
+			   OR lower(COALESCE(sys_name,''))=lower($1)
+			   OR lower(COALESCE(dns_name,''))=lower($1)
+			ORDER BY (lower(name)=lower($1) OR lower(COALESCE(dns_name,''))=lower($1)) DESC, name
+			LIMIT 1
+		`, results[i].Name).Scan(&id, &name, &existingIP)
+		if err == nil {
+			if !s.canAccessDevice(r.Context(), user, id) {
+				continue
+			}
+			results[i].ExistingDevice = id
+			results[i].ExistingDeviceName = name
+			results[i].ExistingDeviceIP = existingIP
+			results[i].IPMismatch = existingIP != results[i].IP
 		}
 	}
 	out := make([]discoveryResult, 0, len(results))
@@ -142,7 +196,7 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": out})
 }
 
-func probeHost(ctx context.Context, ip string, profile *snmpProfileRow, mode string) discoveryResult {
+func probeHost(ctx context.Context, ip string, profiles []snmpProfileRow, mode string) discoveryResult {
 	res := discoveryResult{IP: ip, Name: ip, NameSource: "ip"}
 	count, timeout := 1, 800*time.Millisecond
 	if strings.EqualFold(mode, "reliable") {
@@ -176,18 +230,31 @@ func probeHost(ctx context.Context, ip string, profile *snmpProfileRow, mode str
 	}
 	cancel()
 
-	if profile == nil {
+	if len(profiles) == 0 {
 		return res
-	}
-	select {
-	case <-ctx.Done():
-		return res
-	default:
 	}
 	retries := 0
 	if strings.EqualFold(mode, "reliable") {
 		retries = 1
 	}
+	snmpTimeout := timeout
+	if snmpTimeout < 1500*time.Millisecond {
+		snmpTimeout = 1500 * time.Millisecond
+	}
+	for i := range profiles {
+		select {
+		case <-ctx.Done():
+			return res
+		default:
+		}
+		if probeSNMP(ctx, ip, &profiles[i], retries, snmpTimeout, &res) {
+			break
+		}
+	}
+	return res
+}
+
+func probeSNMP(ctx context.Context, ip string, profile *snmpProfileRow, retries int, timeout time.Duration, res *discoveryResult) bool {
 	g := &gosnmp.GoSNMP{Target: ip, Port: uint16(profile.Port), Transport: "udp", Timeout: timeout, Retries: retries}
 	switch strings.ToLower(profile.Version) {
 	case "v3":
@@ -206,12 +273,17 @@ func probeHost(ctx context.Context, ip string, profile *snmpProfileRow, mode str
 		g.Community = profile.Community
 	}
 	if err := g.Connect(); err != nil {
-		return res
+		return false
 	}
 	defer g.Conn.Close()
 	packet, err := g.Get([]string{"1.3.6.1.2.1.1.5.0", "1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.2.0"})
 	if err != nil || len(packet.Variables) < 3 {
-		return res
+		return false
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	default:
 	}
 	snmpName := strings.TrimSpace(snmpString(packet.Variables[0].Value))
 	if snmpName != "" && res.NameSource != "dns" {
@@ -220,7 +292,7 @@ func probeHost(ctx context.Context, ip string, profile *snmpProfileRow, mode str
 	}
 	res.SysDescr = snmpString(packet.Variables[1].Value)
 	res.SysObjectID = snmpString(packet.Variables[2].Value)
-	return res
+	return true
 }
 
 func parseDiscoveryCIDRs(raw string) ([]*net.IPNet, uint64, error) {

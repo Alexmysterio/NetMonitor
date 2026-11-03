@@ -25,7 +25,8 @@ func selectiveTimeout(next http.Handler) http.Handler {
 		case path == "/api/v1/reports/generate",
 			path == "/api/v1/reports/storage/test",
 			path == "/api/v1/routeros/inventory/refresh",
-			path == "/api/v1/traps/test":
+			path == "/api/v1/traps/test",
+			path == "/api/v1/imports/dude/preview":
 			timeout = 5 * time.Minute
 		case strings.HasPrefix(path, "/api/v1/reports/schedules/") && strings.HasSuffix(path, "/run"):
 			timeout = 5 * time.Minute

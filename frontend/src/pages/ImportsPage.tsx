@@ -116,7 +116,7 @@ export default function ImportsPage() {
 
       <div className="import-drop" onClick={() => fileRef.current?.click()}>
         <div className="import-drop-icon"><Database size={26} /></div>
-        <div><b>Selecciona el archivo dude.db o XML</b><span>SQLite de The Dude (hasta 64 MB) y exportaciones XML. No se importan contraseñas ni comunidades SNMP.</span></div>
+        <div><b>Selecciona el archivo dude.db o XML</b><span>SQLite de The Dude (hasta 256 MB) y exportaciones XML. No se importan contraseñas ni comunidades SNMP.</span></div>
       </div>
 
       <div className="table-card">

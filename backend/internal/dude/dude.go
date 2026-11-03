@@ -62,13 +62,17 @@ type Preview struct {
 	Warnings   []string `json:"warnings"`
 }
 
+// MaxFileSize is the maximum The Dude export accepted for preview. The file is
+// read into memory, so this also bounds the import memory footprint.
+const MaxFileSize = 256 << 20
+
 // Parse detects the file type and returns a normalized preview.
 func Parse(ctx context.Context, filename string, data []byte) (Preview, error) {
 	if len(data) == 0 {
 		return Preview{}, fmt.Errorf("el archivo está vacío")
 	}
-	if len(data) > 64<<20 {
-		return Preview{}, fmt.Errorf("el archivo supera 64 MB")
+	if len(data) > MaxFileSize {
+		return Preview{}, fmt.Errorf("el archivo supera 256 MB")
 	}
 	if len(data) >= 16 && strings.HasPrefix(string(data[:16]), "SQLite format 3") {
 		return parseSQLite(ctx, filename, data)

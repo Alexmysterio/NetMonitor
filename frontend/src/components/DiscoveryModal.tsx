@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Loader2, MapPin, Radar, Server, Sparkles } from 'lucide-react'
 import { apiGet, apiSend } from '../api'
+import { confirmAction } from '../confirm'
 import type { SnmpProfile } from '../types'
 import { Button, EmptyState, Field, Modal } from '../ui'
 
@@ -11,6 +12,9 @@ interface Found {
   sys_object_id: string
   latency_ms: number
   existing_device_id: string
+  existing_device_name: string
+  existing_device_ip: string
+  ip_mismatch: boolean
 }
 
 export default function DiscoveryModal({
@@ -28,7 +32,7 @@ export default function DiscoveryModal({
 }) {
   const [cidr, setCidr] = useState('192.168.1.0/24')
   const [profiles, setProfiles] = useState<SnmpProfile[]>([])
-  const [profile, setProfile] = useState('')
+  const [selectedProfiles, setSelectedProfiles] = useState<string[]>([])
   const [scanning, setScanning] = useState(false)
   const [results, setResults] = useState<Found[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -40,10 +44,11 @@ export default function DiscoveryModal({
     setError('')
     setResults(null)
     setSelected(new Set())
+    setSelectedProfiles([])
     apiGet<SnmpProfile[]>('/snmp-profiles').then(p => {
       setProfiles(p)
       const def = p.find(x => x.is_default) || p[0]
-      if (def) setProfile(def.id)
+      if (def) setSelectedProfiles([def.id])
     }).catch(() => {})
   }, [open])
 
@@ -52,14 +57,52 @@ export default function DiscoveryModal({
     setError('')
     setResults(null)
     try {
-      const found = await apiSend<Found[]>('/discovery/scan', 'POST', { cidr, snmp_profile_id: profile || null })
-      setResults(found)
-      setSelected(new Set(found.map(f => f.ip)))
+      const found = await apiSend<Found[]>('/discovery/scan', 'POST', {
+        cidr,
+        snmp_profile_ids: selectedProfiles,
+      })
+      const mismatches = found.filter(f => f.ip_mismatch)
+      if (mismatches.length) {
+        const detail = mismatches
+          .map(f => `${f.existing_device_name || f.name}: ${f.existing_device_ip} → ${f.ip}`)
+          .join('\n')
+        const update = await confirmAction(
+          `Estos equipos ya existen en el inventario con otra IP:\n\n${detail}\n\n¿Quieres actualizar su IP en lugar de crear duplicados?`,
+          { title: 'Equipos ya inventariados', confirmLabel: 'Actualizar IPs', danger: false },
+        )
+        if (update) {
+          for (const item of mismatches) {
+            try {
+              await apiSend(`/devices/${item.existing_device_id}`, 'PUT', { primary_ip: item.ip })
+              item.existing_device_ip = item.ip
+              item.ip_mismatch = false
+            } catch (e) {
+              setError(`No se pudo actualizar ${item.existing_device_name || item.name}: ${(e as Error).message}`)
+            }
+          }
+        }
+      }
+      const visible = found.filter(f => !f.ip_mismatch)
+      setResults(visible)
+      setSelected(new Set(visible.map(f => f.ip)))
     } catch (e) {
       setError((e as Error).message)
     } finally {
       setScanning(false)
     }
+  }
+
+  const toggleProfile = (id: string) => {
+    setError('')
+    if (selectedProfiles.includes(id)) {
+      setSelectedProfiles(selectedProfiles.filter(p => p !== id))
+      return
+    }
+    if (selectedProfiles.length >= 3) {
+      setError('Máximo 3 perfiles SNMP por descubrimiento')
+      return
+    }
+    setSelectedProfiles([...selectedProfiles, id])
   }
 
   const addSelected = async () => {
@@ -76,7 +119,7 @@ export default function DiscoveryModal({
             name: r.name || `Host-${r.ip.replaceAll('.', '-')}`,
             primary_ip: r.ip,
             device_type: r.sys_descr?.toLowerCase().includes('routeros') ? 'router' : 'generic',
-            snmp_profile_id: profile || null,
+            snmp_profile_id: selectedProfiles[0] || null,
             custom_fields: { discovered_sysdescr: r.sys_descr, discovered_sys_object_id: r.sys_object_id },
             create_default_ping: true,
           })
@@ -133,11 +176,16 @@ export default function DiscoveryModal({
         <Field label="Rangos CIDR" hint="Puedes separar varios rangos con comas. Máximo 65.536 direcciones por barrido; para redes mayores, divide en segmentos.">
           <input className="input mono" value={cidr} onChange={e => setCidr(e.target.value)} placeholder="10.20.0.0/16, 192.168.1.0/24" />
         </Field>
-        <Field label="Perfil SNMP (opcional)">
-          <select className="input" value={profile} onChange={e => setProfile(e.target.value)}>
-            <option value="">Solo ICMP</option>
-            {profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.version}</option>)}
-          </select>
+        <Field label="Perfiles SNMP (máx. 3)" hint="Se prueban en orden hasta identificar el equipo. Sin perfiles, solo ICMP.">
+          <div className="profile-checks">
+            {!profiles.length && <span className="muted small">Sin perfiles SNMP</span>}
+            {profiles.map(p => (
+              <label key={p.id} className={`profile-check ${selectedProfiles.includes(p.id) ? 'active' : ''}`}>
+                <input type="checkbox" checked={selectedProfiles.includes(p.id)} onChange={() => toggleProfile(p.id)} />
+                <span>{p.name} · {p.version}</span>
+              </label>
+            ))}
+          </div>
         </Field>
         <Button variant="dark" className="discovery-scan-btn" onClick={scan} disabled={scanning}>
           {scanning ? <Loader2 size={15} className="spin" /> : <Radar size={15} />} {scanning ? 'Escaneando…' : 'Escanear'}

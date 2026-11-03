@@ -628,10 +628,17 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .event-map { color: #b6c2d1; font-size: 8px; width: 90px; text-align: right; }
 
 /* ─── Discovery ─────────────────────────────────────────────────────────── */
-.discovery-bar { display: flex; align-items: flex-end; gap: 10px; }
-.discovery-bar .field:first-child { flex: 1.1; }
-.discovery-bar .field:nth-child(2) { flex: 1; }
-.discovery-scan-btn { height: 38px; flex: none; }
+.discovery-bar { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) auto; align-items: start; gap: 10px; }
+.discovery-bar .field { min-width: 0; }
+.discovery-scan-btn { height: 38px; margin-top: 19px; }
+.profile-checks { display: flex; flex-wrap: wrap; gap: 4px; min-height: 38px; max-height: 76px; overflow-y: auto; align-content: flex-start; }
+.profile-check { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 7px; background: #fff; font-size: 10px; color: #475569; cursor: pointer; }
+.profile-check input { margin: 0; }
+.profile-check.active { border-color: #bfdbfe; background: #f8faff; color: #1d4ed8; }
+@media (max-width: 760px) {
+  .discovery-bar { grid-template-columns: 1fr; }
+  .discovery-scan-btn { margin-top: 0; width: 100%; }
+}
 .spin { animation: spin .8s linear infinite; }
 .discovery-progress { display: flex; align-items: center; gap: 11px; padding: 16px; background: #f8faff; border: 1px solid #dbeafe; border-radius: 10px; }
 .discovery-radar { width: 42px; height: 42px; background: #eff6ff; color: #2563eb; border-radius: 50%; display: flex; align-items: center; justify-content: center; animation: radarPulse 1.5s infinite; }

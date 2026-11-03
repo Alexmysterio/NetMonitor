@@ -739,8 +739,8 @@ export default function SettingsPage() {
           <p className="page-subtitle">Canales de notificación, credenciales SNMP y reglas de escalado.</p>
         </div>
         <div className="page-head-actions">
-          <Button variant="secondary" onClick={() => openRuleModal()}><Bell size={15} /> Nueva regla</Button>
-          <Button variant="primary" onClick={() => openChannelModal()}><Plus size={15} /> Nuevo canal</Button>
+          {tab === 'rules' && <Button variant="secondary" onClick={() => openRuleModal()}><Bell size={15} /> Nueva regla</Button>}
+          {tab === 'channels' && <Button variant="primary" onClick={() => openChannelModal()}><Plus size={15} /> Nuevo canal</Button>}
         </div>
       </div>
 

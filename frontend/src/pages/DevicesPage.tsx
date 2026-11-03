@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Activity, Check, ChevronRight, Database, Pencil, Plus, RefreshCcw, Search, Server, Tag, Trash2, Wrench, X } from 'lucide-react'
 import { apiGet, apiSend } from '../api'
+import { confirmAction } from '../confirm'
 import type { Agent, Device, DeviceService, SnmpProfile } from '../types'
 import { Button, deviceTypeLabel, EmptyState, Field, formatDuration, IconButton, KeyValue, Modal, Spinner, StatusBadge, StatusDot, timeAgo, timeHM } from '../ui'
 import SnmpInfoModal from '../components/SnmpInfoModal'
@@ -70,6 +71,7 @@ export default function DevicesPage() {
 
   const openDetail = async (d: Device) => {
     setSelected(d)
+    setError('')
     const full = await apiGet<Device>(`/devices/${d.id}`)
     setDetail(full)
   }
@@ -186,6 +188,22 @@ export default function DevicesPage() {
     await load()
   }
 
+  const removeDevice = async (d: Device) => {
+    if (!await confirmAction(`¿Eliminar el dispositivo "${d.name}"? Se quitarán también sus elementos de los mapas, sondas e incidencias.`, { title: 'Eliminar dispositivo', confirmLabel: 'Eliminar', danger: true })) return
+    setError('')
+    setSaving(true)
+    try {
+      await apiSend(`/devices/${d.id}`, 'DELETE')
+      setSelected(null)
+      setDetail(null)
+      await load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const counts = useMemo(() => {
     return {
       up: devices.filter(d => d.status === 'up').length,
@@ -263,6 +281,7 @@ export default function DevicesPage() {
                 <Button variant="secondary" size="sm" onClick={() => setToolsOpen(true)}><Wrench size={14} /> Herramientas</Button>
                 <Button variant="secondary" size="sm" disabled={!detail.snmp_profile_id} onClick={() => setSnmpOpen(true)} title={detail.snmp_profile_id ? 'Inventario SNMP' : 'Sin perfil SNMP'}><Database size={14} /> SNMP</Button>
                 <Button variant="secondary" size="sm" onClick={() => openEdit(detail)}><Pencil size={14} /> Editar</Button>
+                <Button variant="danger" size="sm" onClick={() => void removeDevice(detail)} disabled={saving}><Trash2 size={14} /> Eliminar</Button>
               </div>
             </div>
             <div className="detail-grid">
@@ -290,6 +309,7 @@ export default function DevicesPage() {
               {Object.entries(detail.custom_fields || {}).map(([k, v]) => <span key={k}><b>{k}</b>{String(v)}</span>)}
               {!Object.keys(detail.custom_fields || {}).length && <span className="muted">Sin campos personalizados</span>}
             </div>
+            {error && <div className="form-error">{error}</div>}
           </div>
         )}
       </Modal>

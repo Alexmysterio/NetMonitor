@@ -808,6 +808,9 @@ func (s *Server) loadLinks(ctx context.Context, mapID string) []map[string]any {
 		rendered := ""
 		if label != "" {
 			rendered = dsl.RenderLabel(label, lctx, nil)
+		} else if mastering == "simple" {
+			// A simple link has no traffic source; the UI shows "Enlace simple".
+			rendered = ""
 		} else {
 			rendered = fmt.Sprintf("⬆ %s · ⬇ %s", formatBps(float64(tx)), formatBps(float64(rx)))
 		}

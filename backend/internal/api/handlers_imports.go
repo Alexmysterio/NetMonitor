@@ -18,8 +18,9 @@ import (
 )
 
 func (s *Server) previewDudeImport(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "sube un archivo SQLite (.db) o XML")
+	r.Body = http.MaxBytesReader(w, r.Body, dude.MaxFileSize+(1<<20))
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "sube un archivo SQLite (.db) o XML de hasta 256 MB")
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -28,7 +29,11 @@ func (s *Server) previewDudeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, 64<<20))
+	if header != nil && header.Size > dude.MaxFileSize {
+		writeError(w, http.StatusBadRequest, "el archivo supera 256 MB")
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(file, dude.MaxFileSize))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -37,7 +42,7 @@ func (s *Server) previewDudeImport(w http.ResponseWriter, r *http.Request) {
 	if header != nil && header.Filename != "" {
 		filename = header.Filename
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	preview, err := dude.Parse(ctx, filename, data)
 	if err != nil {

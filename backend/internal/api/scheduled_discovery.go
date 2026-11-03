@@ -246,6 +246,10 @@ func scanCIDRsCore(ctx context.Context, ips []string, profile *snmpProfileRow, m
 	scanCtx, cancel := context.WithTimeout(ctx, 28*time.Second)
 	defer cancel()
 	results := make([]discoveryResult, 0, len(ips))
+	var profiles []snmpProfileRow
+	if profile != nil {
+		profiles = []snmpProfileRow{*profile}
+	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 48)
@@ -261,7 +265,7 @@ spawn:
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res := probeHost(scanCtx, ip, profile, mode)
+			res := probeHost(scanCtx, ip, profiles, mode)
 			if res.Alive {
 				mu.Lock()
 				results = append(results, res)
