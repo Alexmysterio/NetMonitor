@@ -20,6 +20,8 @@ func selectiveTimeout(next http.Handler) http.Handler {
 		}
 		timeout := 30 * time.Second
 		switch {
+		case path == "/api/v1/discovery/scan":
+			timeout = 10 * time.Minute
 		case path == "/api/v1/reports/generate",
 			path == "/api/v1/reports/storage/test",
 			path == "/api/v1/routeros/inventory/refresh",

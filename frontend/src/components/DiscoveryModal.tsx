@@ -130,8 +130,8 @@ export default function DiscoveryModal({
       }
     >
       <div className="discovery-bar">
-        <Field label="Rango CIDR" hint="Máximo /24 recomendado. Se excluyen red y broadcast.">
-          <input className="input mono" value={cidr} onChange={e => setCidr(e.target.value)} placeholder="10.20.1.0/24" />
+        <Field label="Rangos CIDR" hint="Puedes separar varios rangos con comas. Máximo 65.536 direcciones por barrido; para redes mayores, divide en segmentos.">
+          <input className="input mono" value={cidr} onChange={e => setCidr(e.target.value)} placeholder="10.20.0.0/16, 192.168.1.0/24" />
         </Field>
         <Field label="Perfil SNMP (opcional)">
           <select className="input" value={profile} onChange={e => setProfile(e.target.value)}>
@@ -147,7 +147,7 @@ export default function DiscoveryModal({
       {scanning && (
         <div className="discovery-progress">
           <div className="discovery-radar"><Radar size={22} /></div>
-          <div><b>Barriendo {cidr}</b><span>ICMP en paralelo · identificando sysName/sysDescr…</span></div>
+          <div><b>Barriendo {cidr}</b><span>ICMP en paralelo · identificando sysName/sysDescr. Los rangos grandes pueden tardar varios minutos.</span></div>
         </div>
       )}
 

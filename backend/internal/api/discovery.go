@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/netmonitor/netmonitor/internal/secure"
 	probing "github.com/prometheus-community/pro-bing"
 )
+
+const maxDiscoveryHosts = 65536
 
 type discoveryResult struct {
 	IP             string  `json:"ip"`
@@ -25,35 +28,39 @@ type discoveryResult struct {
 	ExistingDevice string  `json:"existing_device_id"`
 }
 
-// discoveryScan performs a bounded /24-style sweep. It intentionally stays
-// synchronous with a hard timeout: operators expect a quick preview before
-// committing discovered devices to a map.
+// discoveryScan performs a bounded sweep over one or more IPv4 CIDRs. Small
+// scans stay synchronous so operators get a quick preview; larger scans use a
+// faster probe mode and more workers, up to maxDiscoveryHosts.
 func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CIDR          string `json:"cidr"`
 		SNMPProfileID string `json:"snmp_profile_id"`
 	}
-	if err := decodeBody(r, &req); err != nil || req.CIDR == "" {
+	if err := decodeBody(r, &req); err != nil || strings.TrimSpace(req.CIDR) == "" {
 		writeError(w, http.StatusBadRequest, "cidr is required")
 		return
 	}
-	_, network, err := net.ParseCIDR(strings.TrimSpace(req.CIDR))
+	networks, total, err := parseDiscoveryCIDRs(req.CIDR)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "CIDR inválido")
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ones, bits := network.Mask.Size()
-	if bits != 32 {
-		writeError(w, http.StatusBadRequest, "por ahora el descubrimiento soporta IPv4")
+	if total > maxDiscoveryHosts {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("el conjunto de rangos supera %d direcciones; divide la red o usa varios descubrimientos", maxDiscoveryHosts))
 		return
 	}
-	if ones < 24 {
-		writeError(w, http.StatusBadRequest, "usa un rango /24 o menor para evitar barridos masivos")
-		return
+	ips := []string{}
+	seen := map[string]bool{}
+	for _, network := range networks {
+		for _, ip := range enumerateIPv4(network) {
+			if !seen[ip] {
+				seen[ip] = true
+				ips = append(ips, ip)
+			}
+		}
 	}
-	ips := enumerateIPv4(network)
-	if len(ips) > 512 {
-		writeError(w, http.StatusBadRequest, "demasiadas direcciones")
+	if len(ips) == 0 {
+		writeError(w, http.StatusBadRequest, "los rangos no contienen direcciones utilizables")
 		return
 	}
 
@@ -65,33 +72,52 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	mode := "reliable"
+	workers := 40
+	scanTimeout := 30 * time.Second
+	if len(ips) > 512 {
+		mode = "fast"
+		workers = 256
+		scanTimeout = 8 * time.Minute
+	}
 	type indexed struct {
 		idx int
 		res discoveryResult
 	}
-	results := make([]discoveryResult, len(ips))
-	sem := make(chan struct{}, 40)
-	var wg sync.WaitGroup
-	done := make(chan indexed, len(ips))
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-	defer cancel()
-spawnLoop:
-	for i, ip := range ips {
-		select {
-		case <-ctx.Done():
-			break spawnLoop
-		default:
-		}
-		wg.Add(1)
-		go func(idx int, ip string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			res := probeHost(ctx, ip, profile, "reliable")
-			done <- indexed{idx: idx, res: res}
-		}(i, ip)
+	type scanJob struct {
+		idx int
+		ip  string
 	}
-	go func() { wg.Wait(); close(done) }()
+	results := make([]discoveryResult, len(ips))
+	ctx, cancel := context.WithTimeout(r.Context(), scanTimeout)
+	defer cancel()
+
+	jobs := make(chan scanJob, workers*2)
+	done := make(chan indexed, workers*2)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				done <- indexed{idx: item.idx, res: probeHost(ctx, item.ip, profile, mode)}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for i, ip := range ips {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- scanJob{idx: i, ip: ip}:
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
 	for item := range done {
 		results[item.idx] = item.res
 	}
@@ -121,6 +147,8 @@ func probeHost(ctx context.Context, ip string, profile *snmpProfileRow, mode str
 	count, timeout := 1, 800*time.Millisecond
 	if strings.EqualFold(mode, "reliable") {
 		count, timeout = 3, 1200*time.Millisecond
+	} else if strings.EqualFold(mode, "fast") {
+		count, timeout = 1, 700*time.Millisecond
 	}
 	pinger, err := probing.NewPinger(ip)
 	if err != nil {
@@ -193,6 +221,40 @@ func probeHost(ctx context.Context, ip string, profile *snmpProfileRow, mode str
 	res.SysDescr = snmpString(packet.Variables[1].Value)
 	res.SysObjectID = snmpString(packet.Variables[2].Value)
 	return res
+}
+
+func parseDiscoveryCIDRs(raw string) ([]*net.IPNet, uint64, error) {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == ' ' || r == '\t'
+	})
+	if len(parts) == 0 {
+		return nil, 0, fmt.Errorf("indica al menos un rango CIDR")
+	}
+	networks := make([]*net.IPNet, 0, len(parts))
+	seen := map[string]bool{}
+	var total uint64
+	for _, part := range parts {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(part))
+		if err != nil {
+			return nil, 0, fmt.Errorf("CIDR inválido: %s", part)
+		}
+		if network.IP.To4() == nil {
+			return nil, 0, fmt.Errorf("por ahora el descubrimiento solo soporta IPv4")
+		}
+		key := network.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		ones, bits := network.Mask.Size()
+		size := uint64(1) << uint(bits-ones)
+		total += size
+		if total > maxDiscoveryHosts {
+			return nil, total, fmt.Errorf("el conjunto de rangos supera %d direcciones", maxDiscoveryHosts)
+		}
+		networks = append(networks, network)
+	}
+	return networks, total, nil
 }
 
 func enumerateIPv4(network *net.IPNet) []string {
