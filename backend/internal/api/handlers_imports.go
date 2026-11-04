@@ -122,11 +122,12 @@ func (s *Server) getDudeImport(w http.ResponseWriter, r *http.Request) {
 }
 
 type dudeApplyRequest struct {
-	MapIDs          *[]string `json:"map_ids"`
-	DeviceSourceIDs *[]string `json:"device_source_ids"`
-	ParentMapID     string    `json:"parent_map_id"`
-	CreateLinks     *bool     `json:"create_links"`
-	Prefix          string    `json:"name_prefix"`
+	MapIDs          *[]string         `json:"map_ids"`
+	DeviceSourceIDs *[]string         `json:"device_source_ids"`
+	SNMPProfiles    map[string]string `json:"snmp_profiles"`
+	ParentMapID     string            `json:"parent_map_id"`
+	CreateLinks     *bool             `json:"create_links"`
+	Prefix          string            `json:"name_prefix"`
 }
 
 func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +178,31 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	} else {
 		for _, d := range preview.Devices {
 			selectedDevices[d.SourceID] = true
+		}
+	}
+	snmpAssignments := map[string]string{}
+	var profileIDs []string
+	seenProfiles := map[string]bool{}
+	for sourceID, profileID := range req.SNMPProfiles {
+		profileID = strings.TrimSpace(profileID)
+		if profileID == "" || !selectedDevices[sourceID] {
+			continue
+		}
+		snmpAssignments[sourceID] = profileID
+		if !seenProfiles[profileID] {
+			seenProfiles[profileID] = true
+			profileIDs = append(profileIDs, profileID)
+		}
+	}
+	if len(profileIDs) > 0 {
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM snmp_profiles WHERE id = ANY($1::uuid[])`, profileIDs).Scan(&count); err != nil {
+			writeError(w, http.StatusBadRequest, "perfil SNMP no válido")
+			return
+		}
+		if count != len(profileIDs) {
+			writeError(w, http.StatusBadRequest, "uno o más perfiles SNMP ya no existen")
+			return
 		}
 	}
 	prefix := strings.TrimSpace(req.Prefix)
@@ -258,7 +284,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		createdMaps = 1
 	}
 
-	createdDevices, reusedDevices := 0, 0
+	createdDevices, reusedDevices, snmpAssigned := 0, 0, 0
 	deviceIDs := map[string]string{}
 	skipped := 0
 	var warnings []string
@@ -310,6 +336,13 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		deviceIDs[d.SourceID] = deviceID
+		if profileID := snmpAssignments[d.SourceID]; profileID != "" {
+			if _, err := tx.Exec(ctx, `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1`, deviceID, profileID); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			snmpAssigned++
+		}
 
 		x, y := d.PosX, d.PosY
 		if x == 0 && y == 0 {
@@ -376,7 +409,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	result, _ := json.Marshal(map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
-		"created_links": createdLinks, "skipped_devices": skipped, "warnings": warnings,
+		"created_links": createdLinks, "snmp_assigned": snmpAssigned, "skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs,
 	})
 	_, err = tx.Exec(ctx, `
@@ -392,7 +425,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
-		"created_links": createdLinks, "skipped_devices": skipped, "warnings": warnings,
+		"created_links": createdLinks, "snmp_assigned": snmpAssigned, "skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs, "by": uid.Username,
 	}})
 }

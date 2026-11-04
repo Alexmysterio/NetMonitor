@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, Database, FileJson, Map as MapIcon, RefreshCw, Upload } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Database, FileJson, KeyRound, Map as MapIcon, RefreshCw, Upload } from 'lucide-react'
 import { apiGet, apiSend, apiUpload } from '../api'
-import type { DudeImport, DudePreview, MapInfo } from '../types'
+import type { DudeImport, DudePreview, MapInfo, SnmpProfile } from '../types'
 import { Button, EmptyState, Field, Modal, Spinner, StatusBadge, timeAgo } from '../ui'
 
 export default function ImportsPage() {
   const [history, setHistory] = useState<DudeImport[]>([])
   const [maps, setMaps] = useState<MapInfo[]>([])
+  const [snmpProfiles, setSnmpProfiles] = useState<SnmpProfile[]>([])
+  const [snmpAssignments, setSnmpAssignments] = useState<Record<string, string>>({})
+  const [bulkProfile, setBulkProfile] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -27,8 +30,12 @@ export default function ImportsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [h, m] = await Promise.all([apiGet<DudeImport[]>('/imports/dude'), apiGet<MapInfo[]>('/maps')])
-      setHistory(h); setMaps(m)
+      const [h, m, p] = await Promise.all([
+        apiGet<DudeImport[]>('/imports/dude'),
+        apiGet<MapInfo[]>('/maps'),
+        apiGet<SnmpProfile[]>('/snmp-profiles'),
+      ])
+      setHistory(h); setMaps(m); setSnmpProfiles(p)
     } catch (e) { setError((e as Error).message) } finally { setLoading(false) }
   }
   useEffect(() => { void load() }, [])
@@ -48,6 +55,8 @@ export default function ImportsPage() {
       setPreview(data.preview)
       setSelectedMaps(data.preview.maps.map(m => m.source_id))
       setSelectedDevices(data.preview.devices.map(d => d.source_id))
+      setSnmpAssignments({})
+      setBulkProfile('')
       setParentMap('')
       setPrefix('')
       setCreateLinks(true)
@@ -65,6 +74,8 @@ export default function ImportsPage() {
       setPreview(full.preview)
       setSelectedMaps(full.preview.maps.map(m => m.source_id))
       setSelectedDevices(full.preview.devices.map(d => d.source_id))
+      setSnmpAssignments({})
+      setBulkProfile('')
       setParentMap('')
       setPrefix('')
       setCreateLinks(true)
@@ -73,13 +84,39 @@ export default function ImportsPage() {
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
 
+  const assignSNMP = (sourceID: string, profileID: string) => {
+    setSnmpAssignments(prev => {
+      const next = { ...prev }
+      if (profileID) next[sourceID] = profileID
+      else delete next[sourceID]
+      return next
+    })
+  }
+
+  const applySNMPToAll = () => {
+    if (!preview) return
+    setSnmpAssignments(prev => {
+      const next = { ...prev }
+      for (const device of preview.devices) {
+        if (!selectedDevices.includes(device.source_id)) continue
+        if (bulkProfile) next[device.source_id] = bulkProfile
+        else delete next[device.source_id]
+      }
+      return next
+    })
+  }
+
   const apply = async () => {
     if (!preview) return
     setBusy(true); setError('')
     try {
+      const snmpProfilesPayload = Object.fromEntries(
+        Object.entries(snmpAssignments).filter(([sourceID, profileID]) => profileID && selectedDevices.includes(sourceID)),
+      )
       const data = await apiSend<Record<string, unknown>>(`/imports/dude/${importID}/apply`, 'POST', {
         map_ids: selectedMaps,
         device_source_ids: selectedDevices,
+        snmp_profiles: snmpProfilesPayload,
         parent_map_id: parentMap,
         name_prefix: prefix,
         create_links: createLinks,
@@ -95,6 +132,11 @@ export default function ImportsPage() {
     const mapIDs = result.map_ids as Record<string, string> | undefined
     return mapIDs ? Object.values(mapIDs)[0] || '' : ''
   }, [result])
+
+  const assignedSNMP = useMemo(
+    () => Object.entries(snmpAssignments).filter(([sourceID, profileID]) => profileID && selectedDevices.includes(sourceID)).length,
+    [snmpAssignments, selectedDevices],
+  )
 
   return (
     <div className="page">
@@ -116,7 +158,7 @@ export default function ImportsPage() {
 
       <div className="import-drop" onClick={() => fileRef.current?.click()}>
         <div className="import-drop-icon"><Database size={26} /></div>
-        <div><b>Selecciona el archivo dude.db o XML</b><span>SQLite de The Dude (hasta 256 MB) y exportaciones XML. No se importan contraseñas ni comunidades SNMP.</span></div>
+        <div><b>Selecciona el archivo dude.db o XML</b><span>SQLite de The Dude (hasta 256 MB) y exportaciones XML. No se importan credenciales; puedes asignar perfiles SNMP ya creados en el preview.</span></div>
       </div>
 
       <div className="table-card">
@@ -139,7 +181,7 @@ export default function ImportsPage() {
         )}
       </div>
 
-      <div className="warning-box"><AlertTriangle size={16} /><div><b>El modelo de The Dude es antiguo</b><span>Las credenciales, sondas y perfiles SNMP no se migran. Revisa los equipos importados y asigna perfiles SNMP/RouterOS cifrados antes de monitorizarlos.</span></div></div>
+      <div className="warning-box"><AlertTriangle size={16} /><div><b>El modelo de The Dude es antiguo</b><span>Las credenciales no se migran. En el preview puedes asignar perfiles SNMP ya creados; las credenciales RouterOS se asignan después desde el inventario.</span></div></div>
 
       <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="Preview de importación" subtitle={preview ? `${preview.filename} · ${preview.source_kind}` : ''} width={960} footer={<><Button variant="ghost" onClick={() => setPreviewOpen(false)}>Cerrar</Button>{result ? (firstMapID && <Button variant="primary" onClick={() => navigate(`/maps/${firstMapID}`)}><MapIcon size={14} /> Abrir mapa importado</Button>) : <Button variant="primary" onClick={() => void apply()} disabled={busy || !selectedMaps.length || !selectedDevices.length}>{busy ? 'Importando…' : 'Aplicar importación'}</Button>}</>}>
         {preview && <>
@@ -169,7 +211,43 @@ export default function ImportsPage() {
               </div>
             </div>
           </div>
-          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.created_links ?? 0)} enlaces.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
+          {!result && (
+            <div className="snmp-assign">
+              <div className="snmp-assign-head">
+                <div>
+                  <h4 className="section-mini-title"><KeyRound size={14} /> Perfil SNMP <span>{assignedSNMP} asignados</span></h4>
+                  <span className="muted small">Opcional. Se aplica a los equipos seleccionados; puedes usar el mismo en todos.</span>
+                </div>
+                {snmpProfiles.length > 0 && (
+                  <div className="snmp-bulk">
+                    <select className="input" value={bulkProfile} onChange={e => setBulkProfile(e.target.value)}>
+                      <option value="">Sin perfil</option>
+                      {snmpProfiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.version}</option>)}
+                    </select>
+                    <Button size="sm" variant="secondary" onClick={applySNMPToAll} disabled={!selectedDevices.length}>Aplicar a todos</Button>
+                  </div>
+                )}
+              </div>
+              {!snmpProfiles.length ? (
+                <span className="muted small">No hay perfiles SNMP creados. Créalos en Ajustes y servicios → Perfiles SNMP y vuelve a abrir el preview.</span>
+              ) : selectedDevices.length === 0 ? (
+                <span className="muted small">Selecciona al menos un equipo para asignarle perfil.</span>
+              ) : (
+                <div className="snmp-assign-list">
+                  {preview.devices.filter(d => selectedDevices.includes(d.source_id)).map(d => (
+                    <div key={d.source_id} className="snmp-assign-row">
+                      <span><b>{d.name}</b><small className="mono">{d.address || 'sin IP'}</small></span>
+                      <select className="input" value={snmpAssignments[d.source_id] || ''} onChange={e => assignSNMP(d.source_id, e.target.value)}>
+                        <option value="">Sin perfil</option>
+                        {snmpProfiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.snmp_assigned ?? 0)} con perfil SNMP, {String(result.created_links ?? 0)} enlaces.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
         </>}
       </Modal>
     </div>

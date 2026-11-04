@@ -1173,6 +1173,17 @@ body.noc-flash { animation: nocFlash .6s ease-in-out 3; }
 .import-summary b { display: block; font-size: 20px; letter-spacing: -.04em; }
 .import-summary span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
 .import-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.snmp-assign { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafc; }
+.snmp-assign-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.snmp-assign-head .section-mini-title { margin: 0; display: flex; align-items: center; gap: 5px; }
+.snmp-bulk { display: flex; align-items: center; gap: 8px; }
+.snmp-bulk .input { min-width: 220px; }
+.snmp-assign-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px; max-height: 240px; overflow: auto; }
+.snmp-assign-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; background: #fff; border: 1px solid var(--line-2); border-radius: 8px; }
+.snmp-assign-row > span { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.snmp-assign-row b { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snmp-assign-row small { font-size: 9px; color: var(--muted); }
+.snmp-assign-row .input { width: 190px; flex: none; font-size: 10px; }
 
 /* Reports */
 .report-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 10px 12px; margin-bottom: 14px; }
@@ -1209,6 +1220,12 @@ body.noc-flash { animation: nocFlash .6s ease-in-out 3; }
   .traps-table .data-row, .trap-rules-table .data-row, .mib-notifications-table .data-row,
   .routeros-inventory-table .data-row, .routeros-jobs-table .data-row, .import-columns { grid-template-columns: 1fr; }
   .import-columns { grid-template-columns: 1fr; }
+  .snmp-assign-head { align-items: stretch; }
+  .snmp-bulk { width: 100%; }
+  .snmp-bulk .input { flex: 1; min-width: 0; }
+  .snmp-assign-list { grid-template-columns: 1fr; }
+  .snmp-assign-row { flex-direction: column; align-items: stretch; }
+  .snmp-assign-row .input { width: 100%; }
 }
 .node-root-cause {
   position: absolute; left: 50%; bottom: -11px; transform: translateX(-50%);
