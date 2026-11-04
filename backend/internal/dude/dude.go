@@ -107,6 +107,15 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 	if err != nil {
 		return Preview{}, err
 	}
+	// Modern Dude databases store devices, maps and links as Nova Message
+	// blobs in the objs table instead of relational tables.
+	if objsTable := findTable(tables, "objs"); objsTable != "" {
+		if p, ok, err := parseNovaSQLite(ctx, filename, db, objsTable); err != nil {
+			return Preview{}, err
+		} else if ok {
+			return p, nil
+		}
+	}
 	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Links: []Link{}}
 
 	mapTable := findTable(tables, "map", "maps", "dude_map", "maps_map")
@@ -234,32 +243,7 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 		}
 	}
 
-	for i := range p.Maps {
-		for _, d := range p.Devices {
-			if d.SourceMapID == p.Maps[i].SourceID {
-				p.Maps[i].DeviceCount++
-			}
-		}
-	}
-	if len(p.Maps) == 0 {
-		p.Maps = append(p.Maps, Map{SourceID: "imported", Name: "Importado desde The Dude"})
-	}
-	// Existing Dude versions store coordinates with the device table. Use them
-	// when no map_object table is present.
-	for i := range p.Devices {
-		if p.Devices[i].SourceMapID == "" {
-			for _, m := range p.Maps {
-				if strings.EqualFold(m.Name, p.Devices[i].MapName) {
-					p.Devices[i].SourceMapID = m.SourceID
-					break
-				}
-			}
-			if p.Devices[i].SourceMapID == "" {
-				p.Devices[i].SourceMapID = p.Maps[0].SourceID
-			}
-		}
-	}
-	sort.Slice(p.Devices, func(i, j int) bool { return strings.ToLower(p.Devices[i].Name) < strings.ToLower(p.Devices[j].Name) })
+	finalizePreview(&p)
 	return p, nil
 }
 
