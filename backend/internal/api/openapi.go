@@ -21,6 +21,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 			"/auth/login":                 map[string]any{"post": op("Login", "Autentica usuario y devuelve JWT")},
 			"/health":                     map[string]any{"get": op("Health", "Estado del servicio")},
 			"/devices":                    map[string]any{"get": op("Listar dispositivos", "Lista filtrada por permisos"), "post": op("Crear dispositivo", "Alta de dispositivo")},
+			"/devices/bulk":               map[string]any{"post": op("Acciones masivas", "Perfil SNMP, etiquetas, monitorización, reconocimiento, sondeo o borrado")},
 			"/devices/{id}":               map[string]any{"get": op("Obtener dispositivo", "Detalle"), "put": op("Editar dispositivo", "Actualiza"), "delete": op("Borrar dispositivo", "Elimina")},
 			"/devices/{id}/snmp-info":     map[string]any{"get": op("Inventario SNMP", "Sistema, IPs, interfaces, ARP y rutas")},
 			"/devices/{id}/interfaces":    map[string]any{"get": op("Interfaces SNMP", "Lista de interfaces para enlaces")},

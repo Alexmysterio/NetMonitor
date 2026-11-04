@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Activity, Check, ChevronRight, Database, Pencil, Plus, RefreshCcw, Search, Server, Tag, Trash2, Wrench, X } from 'lucide-react'
+import { Activity, AlertTriangle, Check, ChevronRight, Database, Pencil, Plus, RefreshCcw, Search, Server, Tag, Trash2, Wrench, X } from 'lucide-react'
 import { apiGet, apiSend } from '../api'
 import { confirmAction } from '../confirm'
 import type { Agent, Device, DeviceService, SnmpProfile } from '../types'
@@ -16,6 +16,13 @@ export default function DevicesPage() {
   const [status, setStatus] = useState('')
   const [selected, setSelected] = useState<Device | null>(null)
   const [detail, setDetail] = useState<Device | null>(null)
+  const [bulkSelected, setBulkSelected] = useState<string[]>([])
+  const [bulkAction, setBulkAction] = useState('snmp_profile')
+  const [bulkProfileID, setBulkProfileID] = useState('')
+  const [bulkTag, setBulkTag] = useState('')
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkError, setBulkError] = useState('')
+  const [notice, setNotice] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState('')
   const [ip, setIp] = useState('')
@@ -59,7 +66,16 @@ export default function DevicesPage() {
 
   useEffect(() => {
     apiGet<any[]>('/device-types').then(setDeviceTypes).catch(() => {})
+    apiGet<SnmpProfile[]>('/snmp-profiles').then(setProfiles).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    setBulkSelected(prev => {
+      const visible = new Set(devices.map(d => d.id))
+      const next = prev.filter(id => visible.has(id))
+      return next.length === prev.length ? prev : next
+    })
+  }, [devices])
 
   useEffect(() => {
     if (!createOpen) return
@@ -204,6 +220,58 @@ export default function DevicesPage() {
     }
   }
 
+  const allBulkSelected = devices.length > 0 && devices.every(d => bulkSelected.includes(d.id))
+
+  const toggleBulk = (id: string) => {
+    setBulkSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  const toggleAllBulk = () => {
+    setBulkSelected(allBulkSelected ? [] : devices.map(d => d.id))
+  }
+
+  const flash = (msg: string) => {
+    setNotice(msg)
+    window.setTimeout(() => setNotice(''), 4000)
+  }
+
+  const runBulk = async () => {
+    if (!bulkSelected.length) return
+    setBulkError('')
+    if (bulkAction === 'delete') {
+      if (!await confirmAction(`¿Eliminar ${bulkSelected.length} dispositivos? Se quitarán también sus elementos de mapas, sondas e incidencias.`, { title: 'Eliminar dispositivos', confirmLabel: 'Eliminar', danger: true })) return
+    }
+    if ((bulkAction === 'tags_add' || bulkAction === 'tags_remove') && !bulkTag.trim()) {
+      setBulkError('Escribe una etiqueta')
+      return
+    }
+    if (bulkAction === 'snmp_profile' && !bulkProfileID) {
+      if (!await confirmAction(`¿Quitar el perfil SNMP a ${bulkSelected.length} dispositivos?`, { title: 'Quitar perfil SNMP', confirmLabel: 'Quitar', danger: true })) return
+    }
+    setBulkBusy(true)
+    try {
+      const action = bulkAction === 'monitoring_on' || bulkAction === 'monitoring_off' ? 'monitoring' : bulkAction
+      const payload: Record<string, unknown> = { device_ids: bulkSelected, action }
+      if (bulkAction === 'snmp_profile') payload.snmp_profile_id = bulkProfileID
+      if (bulkAction === 'tags_add' || bulkAction === 'tags_remove') payload.tags = [bulkTag.trim()]
+      if (action === 'monitoring') payload.enabled = bulkAction === 'monitoring_on'
+      const res = await apiSend<{ updated?: number; deleted?: number }>('/devices/bulk', 'POST', payload)
+      flash(bulkAction === 'delete'
+        ? `${res.deleted ?? bulkSelected.length} dispositivos eliminados`
+        : `${res.updated ?? bulkSelected.length} dispositivos actualizados`)
+      if (bulkAction === 'delete') {
+        setSelected(null)
+        setDetail(null)
+      }
+      setBulkSelected([])
+      await load()
+    } catch (e) {
+      setBulkError((e as Error).message)
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const counts = useMemo(() => {
     return {
       up: devices.filter(d => d.status === 'up').length,
@@ -228,6 +296,9 @@ export default function DevicesPage() {
         </div>
       </div>
 
+      {bulkError && <div className="form-error"><AlertTriangle size={14} /> {bulkError}</div>}
+      {notice && <div className="notice-ok"><Check size={14} /> {notice}</div>}
+
       <div className="table-card">
         <div className="table-toolbar">
           <div className="search-inline wide"><Search size={15} /><input className="input" value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar por nombre, IP o etiqueta…" /></div>
@@ -240,13 +311,60 @@ export default function DevicesPage() {
           </div>
         </div>
 
+        {bulkSelected.length > 0 && (
+          <div className="bulk-bar">
+            <span className="bulk-count"><Check size={14} /> <b>{bulkSelected.length}</b> seleccionados</span>
+            <select className="input bulk-action" aria-label="Acción masiva" value={bulkAction} onChange={e => setBulkAction(e.target.value)}>
+              <option value="snmp_profile">Asignar perfil SNMP</option>
+              <option value="tags_add">Añadir etiqueta</option>
+              <option value="tags_remove">Quitar etiqueta</option>
+              <option value="monitoring_on">Activar monitorización</option>
+              <option value="monitoring_off">Pausar monitorización</option>
+              <option value="acknowledge">Reconocer</option>
+              <option value="unacknowledge">Quitar reconocimiento</option>
+              <option value="poll_now">Sondear ahora</option>
+              <option value="delete">Eliminar</option>
+            </select>
+            {bulkAction === 'snmp_profile' && (
+              <select className="input bulk-profile" aria-label="Perfil SNMP" value={bulkProfileID} onChange={e => setBulkProfileID(e.target.value)}>
+                <option value="">Sin perfil</option>
+                {profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.version}</option>)}
+              </select>
+            )}
+            {bulkAction === 'snmp_profile' && !profiles.length && <span className="muted small">No hay perfiles SNMP</span>}
+            {(bulkAction === 'tags_add' || bulkAction === 'tags_remove') && (
+              <input className="input bulk-tag" value={bulkTag} onChange={e => setBulkTag(e.target.value)} placeholder="Etiqueta" aria-label="Etiqueta" />
+            )}
+            <Button size="sm" variant={bulkAction === 'delete' ? 'danger' : 'primary'} onClick={() => void runBulk()} disabled={bulkBusy}>
+              {bulkBusy ? 'Aplicando…' : bulkAction === 'delete' ? <><Trash2 size={13} /> Eliminar</> : 'Aplicar'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setBulkSelected([])}>Limpiar</Button>
+          </div>
+        )}
+
         {loading && !devices.length ? <div className="page-center"><Spinner /></div> : (
-          <div className="data-table">
+          <div className="data-table devices-table">
             <div className="data-row head">
+              <span className="cell-check"><input type="checkbox" checked={allBulkSelected} onChange={toggleAllBulk} disabled={!devices.length} aria-label="Seleccionar todos los dispositivos" /></span>
               <span>Estado</span><span>Dispositivo</span><span>Dirección</span><span>Tipo</span><span>Sondas</span><span>Etiquetas</span><span>Última vez</span><span />
             </div>
             {devices.map(d => (
-              <button key={d.id} className="data-row" onClick={() => openDetail(d)}>
+              <div
+                key={d.id}
+                className="data-row device-row"
+                role="button"
+                tabIndex={0}
+                onClick={() => void openDetail(d)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    void openDetail(d)
+                  }
+                }}
+              >
+                <span className="cell-check" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+                  <input type="checkbox" checked={bulkSelected.includes(d.id)} onChange={() => toggleBulk(d.id)} aria-label={`Seleccionar ${d.name}`} />
+                </span>
                 <span><StatusBadge status={d.is_acknowledged && d.status === 'down' ? 'acknowledged' : d.status} /></span>
                 <span className="cell-main"><b>{d.name}</b>{d.is_monitoring_enabled === false && <small>monitorización pausada</small>}</span>
                 <span className="mono cell-ip">{d.primary_ip}</span>
@@ -259,7 +377,7 @@ export default function DevicesPage() {
                 <span className="cell-tags">{d.tags?.slice(0, 2).map(t => <span key={t} className="mini-tag">{t}</span>)}</span>
                 <span className="muted small">{timeAgo(d.last_seen_up_at)}</span>
                 <span><ChevronRight size={15} className="muted" /></span>
-              </button>
+              </div>
             ))}
             {!devices.length && !loading && <EmptyState title="Sin dispositivos" message="Crea el primer dispositivo para empezar a monitorizar." icon={<Server size={24} />} />}
           </div>

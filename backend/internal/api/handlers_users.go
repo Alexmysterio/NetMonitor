@@ -361,7 +361,8 @@ func (s *Server) accessGuard(next http.Handler) http.Handler {
 					return
 				}
 			case "devices":
-				if parts[1] != "" && !s.canAccessDevice(r.Context(), u, parts[1]) {
+				// /devices/bulk validates every device id inside the handler.
+				if parts[1] != "" && parts[1] != "bulk" && !s.canAccessDevice(r.Context(), u, parts[1]) {
 					writeError(w, http.StatusForbidden, "sin acceso a este dispositivo")
 					return
 				}

@@ -126,6 +126,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/devices", s.listDevices)
 		r.Post("/devices", s.createDevice)
+		r.Post("/devices/bulk", s.bulkDevices)
 		r.Get("/devices/{id}", s.getDevice)
 		r.Put("/devices/{id}", s.updateDevice)
 		r.Delete("/devices/{id}", s.deleteDevice)
