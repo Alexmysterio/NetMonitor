@@ -273,6 +273,8 @@ docker network create -d macvlan \
   -o parent=<HOST_IF> netmonitor-lan
 ```
 
+En Unraid, el `parent` de una red macvlan/ipvlan con VLAN debe ser la interfaz física (o la interfaz VLAN del host), no `br0`, y el puerto del switch debe permitir esa VLAN. Con macvlan el host no puede hacer ping al contenedor; compruébalo desde otro equipo de la LAN.
+
 **Configura el gateway en `.env` (caso B):**
 
 ```env
