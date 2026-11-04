@@ -243,61 +243,39 @@ docker pull ghcr.io/alexmysterio/netmonitor:latest
 
 La imagen `netmonitor:latest` está publicada como pública: no necesitas iniciar sesión en GHCR para descargarla.
 
-### Rutas a redes privadas
+### Rutas a redes privadas (opcional)
 
-Por defecto el contenedor usa la red bridge de Docker y su gateway. Si el host ya enruta hacia la LAN/VPN, no necesitas nada más: el contenedor sale por el host y alcanza cualquier red privada que el host alcance. En ese caso deja `PRIVATE_ROUTE_GATEWAY` vacío.
+Por defecto el contenedor usa la red bridge de Docker. Si el host ya enruta a la LAN/VPN, no hay que configurar nada: el contenedor sale por el host. Deja `PRIVATE_ROUTE_GATEWAY` vacío.
 
-Si el contenedor está realmente conectado a la LAN mediante una interfaz propia (macvlan/ipvlan sobre la NIC física), puedes enviar el tráfico RFC1918 por el gateway de esa interfaz. La configuración no depende de la IP del contenedor: puede ser fija o asignada por Docker.
-
-> **Importante:** no crees una red **bridge** de Docker con la misma subred que la LAN real. Docker la mantiene aislada y el contenedor solo verá el gateway del bridge, no los equipos reales, aunque el host sí los vea. Para estar en la LAN real usa macvlan/ipvlan.
-
-**Caso A — el host ya llega a la LAN (Docker Desktop/Windows o host con ruta):**
+Si el contenedor tiene una interfaz propia en la LAN/VPN (macvlan/ipvlan, por ejemplo una VLAN de Unraid), configura el gateway de esa red para que el tráfico privado salga por ella:
 
 ```env
-PRIVATE_ROUTE_GATEWAY=
+PRIVATE_ROUTE_GATEWAY=<gateway-de-la-VLAN>
 PRIVATE_ROUTE_DEV=
 PRIVATE_ROUTES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 ```
 
-No uses el overlay. El contenedor sale por el gateway de Docker y el host aplica su ruta.
+- `PRIVATE_ROUTE_GATEWAY`: gateway de la VLAN/LAN. Vacío = rutas desactivadas y todo sale por Docker.
+- `PRIVATE_ROUTE_DEV`: interfaz (`eth0`, `eth1`...). Vacío = se detecta por la ruta al gateway.
+- `PRIVATE_ROUTES`: redes que salen por ese gateway. Para enviar también Internet: `0.0.0.0/0`.
+- `NET_ADMIN` ya está en `docker-compose.yml`; las rutas de PostgreSQL/Redis (`172.x/16`) son más específicas y no se rompen.
 
-**Caso B — el contenedor debe tener una interfaz real en la LAN (Linux):**
-
-Crea una red macvlan/ipvlan y usa el overlay [`docker-compose.lan.yml`](./docker-compose.lan.yml):
-
-```bash
-# Ejemplo con macvlan; ajusta subred, gateway e interfaz del host
-docker network create -d macvlan \
-  --subnet=<LAN_CIDR> \
-  --gateway=<LAN_GATEWAY> \
-  -o parent=<HOST_IF> netmonitor-lan
-```
-
-En Unraid, el `parent` de una red macvlan/ipvlan con VLAN debe ser la interfaz física (o la interfaz VLAN del host), no `br0`, y el puerto del switch debe permitir esa VLAN. Con macvlan el host no puede hacer ping al contenedor; compruébalo desde otro equipo de la LAN.
-
-**Configura el gateway en `.env` (caso B):**
-
-```env
-PRIVATE_ROUTE_GATEWAY=<LAN_GATEWAY>
-PRIVATE_ROUTE_DEV=
-PRIVATE_ROUTES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
-LAN_NETWORK=netmonitor-lan
-```
-
-- `PRIVATE_ROUTE_GATEWAY`: gateway de la red LAN/VPN. Si se deja vacío, las rutas se desactivan y todo sigue saliendo por Docker.
-- `PRIVATE_ROUTE_DEV`: interfaz del contenedor (`eth0`, `eth1`...). Si se deja vacío, se detecta desde la ruta directa al gateway.
-- `PRIVATE_ROUTES`: CIDR separados por comas o espacios. Por defecto, las tres redes privadas RFC1918.
-- `LAN_NETWORK`: solo si usas el overlay; es el nombre de la red externa ya existente.
-
-**Arranca con el overlay (caso B):**
+**Unraid / VLAN:** si ya has creado la red macvlan/ipvlan y el contenedor la tiene adjunta, **no uses `docker-compose.lan.yml`**: solo configura las tres variables y recrea el contenedor (en la UI de Unraid, añádelas y pulsa Aplicar; con Compose Manager, edita el `.env` y ejecuta `docker compose up -d`). Comprueba el driver y el parent con:
 
 ```bash
+docker network inspect <red> --format '{{.Driver}} {{json .Options}}'
+```
+
+Si el gateway responde desde el contenedor, la VLAN está bien. Con macvlan el host de Unraid no puede hacer ping al contenedor; pruébalo desde otro equipo de la LAN. Si no responde, revisa que el `parent` sea la interfaz que lleva la VLAN y que el switch permita esa VLAN.
+
+**Si la red aún no está en tu compose**, usa el overlay [`docker-compose.lan.yml`](./docker-compose.lan.yml):
+
+```bash
+# LAN_NETWORK=<nombre-de-la-red> en .env
 docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
 ```
 
-Si ya adjuntaste la red en tu propio compose, usa `docker compose up -d`.
-
-El contenedor necesita `NET_ADMIN` (ya está en `docker-compose.yml`) para aplicar las rutas. La ruta por defecto a Internet no cambia: sigue saliendo por el gateway de Docker. Las rutas propias de Docker (`172.x.0.0/16`, DNS, PostgreSQL, Redis) son más específicas y siguen funcionando. El overlay usa `gw_priority` para mantener el gateway de Docker como predeterminado; requiere una versión reciente de Docker. Si tu versión no lo soporta, el gateway de la LAN podría pasar a ser el predeterminado.
+> No uses un bridge de Docker con la misma subred que la LAN real: Docker lo aísla y el contenedor no verá los equipos reales, aunque el host sí.
 
 **Comprobar:**
 
@@ -306,10 +284,7 @@ docker compose exec netmonitor ip route get <IP_PRIVADA>
 docker compose exec netmonitor ping -c 3 <IP_PRIVADA>
 ```
 
-- **Caso A:** debe salir `via <gateway-de-Docker>` y el ping debe funcionar. Si el host hace ping pero el contenedor no, revisa el firewall/forwarding del host (UFW, `FORWARD`) y que no exista un bridge de Docker con la misma subred que la LAN.
-- **Caso B:** debe salir `via <LAN_GATEWAY> dev <interfaz>` y el ping debe funcionar. Si aparece un aviso de gateway no conectado, el contenedor no está unido a esa red.
-
-`NET_ADMIN` solo es necesario para el caso B; si aparece `Operation not permitted`, falta esa capacidad.
+Debe salir `via <gateway> dev <interfaz>` y, si usas VLAN, `src <IP-del-contenedor>`. Si sale por el gateway de Docker y el ping funciona, el host está enrutando; si quieres forzar la VLAN, revisa `PRIVATE_ROUTE_GATEWAY`.
 
 El compose básico no incluye backups, agente remoto, traps/Syslog publicados, iconos personalizados ni TLS/mTLS. Esas piezas están en archivos opcionales para que cada usuario elija. El overlay principal es [`docker-compose.advanced.yml`](./docker-compose.advanced.yml):
 

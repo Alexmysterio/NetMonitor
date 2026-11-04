@@ -14,8 +14,8 @@
 # 2. Start the stack with this overlay:
 #      docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
 #
-# If the container is already attached to the LAN/VPN network in your own
-# compose, you do not need this overlay; just set PRIVATE_ROUTE_* in .env.
+# If Unraid or your own compose already attaches the VLAN/macvlan network to
+# the container, you do not need this overlay; just set PRIVATE_ROUTE_* in .env.
 
 services:
   netmonitor:

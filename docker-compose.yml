@@ -55,9 +55,10 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       SEED_DEMO: ${SEED_DEMO:?Set SEED_DEMO in .env}
-      PRIVATE_ROUTE_GATEWAY: ${PRIVATE_ROUTE_GATEWAY?Set PRIVATE_ROUTE_GATEWAY in .env (empty disables)}
-      PRIVATE_ROUTE_DEV: ${PRIVATE_ROUTE_DEV?Set PRIVATE_ROUTE_DEV in .env (empty autodetects)}
-      PRIVATE_ROUTES: ${PRIVATE_ROUTES?Set PRIVATE_ROUTES in .env}
+      # Optional: only needed when the container has its own LAN/VPN interface.
+      PRIVATE_ROUTE_GATEWAY: ${PRIVATE_ROUTE_GATEWAY:-}
+      PRIVATE_ROUTE_DEV: ${PRIVATE_ROUTE_DEV:-}
+      PRIVATE_ROUTES: ${PRIVATE_ROUTES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
     ports:
       - "${HTTP_BIND:?Set HTTP_BIND in .env}:${HTTP_PORT:?Set HTTP_PORT in .env}:80"
     volumes:
