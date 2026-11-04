@@ -245,28 +245,35 @@ La imagen `netmonitor:latest` está publicada como pública: no necesitas inicia
 
 ### Rutas a redes privadas
 
-Por defecto el contenedor solo conoce la red bridge de Docker y usa su gateway para todo. Si la LAN/VPN está en otra interfaz, NetMonitor puede enviar el tráfico RFC1918 por el gateway de esa interfaz. La configuración no depende de la IP del contenedor: puede ser fija o asignada por Docker, y la interfaz se detecta automáticamente.
+Por defecto el contenedor usa la red bridge de Docker y su gateway. Si el host ya enruta hacia la LAN/VPN, no necesitas nada más: el contenedor sale por el host y alcanza cualquier red privada que el host alcance. En ese caso deja `PRIVATE_ROUTE_GATEWAY` vacío.
 
-**1. Adjunta el contenedor a la red de la LAN/VPN.** Si ya la tienes en tu compose, no hagas nada. Si no, usa el overlay [`docker-compose.lan.yml`](./docker-compose.lan.yml), que adjunta una red externa por nombre sin fijar ninguna IP:
+Si el contenedor está realmente conectado a la LAN mediante una interfaz propia (macvlan/ipvlan sobre la NIC física), puedes enviar el tráfico RFC1918 por el gateway de esa interfaz. La configuración no depende de la IP del contenedor: puede ser fija o asignada por Docker.
+
+> **Importante:** no crees una red **bridge** de Docker con la misma subred que la LAN real. Docker la mantiene aislada y el contenedor solo verá el gateway del bridge, no los equipos reales, aunque el host sí los vea. Para estar en la LAN real usa macvlan/ipvlan.
+
+**Caso A — el host ya llega a la LAN (Docker Desktop/Windows o host con ruta):**
+
+```env
+PRIVATE_ROUTE_GATEWAY=
+PRIVATE_ROUTE_DEV=
+PRIVATE_ROUTES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+No uses el overlay. El contenedor sale por el gateway de Docker y el host aplica su ruta.
+
+**Caso B — el contenedor debe tener una interfaz real en la LAN (Linux):**
+
+Crea una red macvlan/ipvlan y usa el overlay [`docker-compose.lan.yml`](./docker-compose.lan.yml):
 
 ```bash
-# Ejemplo con macvlan en Linux; ajusta subred, gateway e interfaz del host
+# Ejemplo con macvlan; ajusta subred, gateway e interfaz del host
 docker network create -d macvlan \
   --subnet=<LAN_CIDR> \
   --gateway=<LAN_GATEWAY> \
   -o parent=<HOST_IF> netmonitor-lan
 ```
 
-También sirve una red bridge si el host ya enruta hacia esa red:
-
-```bash
-docker network create \
-  --subnet=<LAN_CIDR> \
-  --gateway=<LAN_GATEWAY> \
-  netmonitor-lan
-```
-
-**2. Configura el gateway en `.env`:**
+**Configura el gateway en `.env` (caso B):**
 
 ```env
 PRIVATE_ROUTE_GATEWAY=<LAN_GATEWAY>
@@ -280,7 +287,7 @@ LAN_NETWORK=netmonitor-lan
 - `PRIVATE_ROUTES`: CIDR separados por comas o espacios. Por defecto, las tres redes privadas RFC1918.
 - `LAN_NETWORK`: solo si usas el overlay; es el nombre de la red externa ya existente.
 
-**3. Arranca:**
+**Arranca con el overlay (caso B):**
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
@@ -294,10 +301,13 @@ El contenedor necesita `NET_ADMIN` (ya está en `docker-compose.yml`) para aplic
 
 ```bash
 docker compose exec netmonitor ip route get <IP_PRIVADA>
-docker compose exec netmonitor ip route get 1.1.1.1
+docker compose exec netmonitor ping -c 3 <IP_PRIVADA>
 ```
 
-La primera debe mostrar `via <LAN_GATEWAY> dev <interfaz>`; la segunda, el gateway de Docker. Si aparece `Operation not permitted`, falta `NET_ADMIN`; si aparece un aviso de gateway no conectado, el contenedor no está unido a la red de ese gateway.
+- **Caso A:** debe salir `via <gateway-de-Docker>` y el ping debe funcionar. Si el host hace ping pero el contenedor no, revisa el firewall/forwarding del host (UFW, `FORWARD`) y que no exista un bridge de Docker con la misma subred que la LAN.
+- **Caso B:** debe salir `via <LAN_GATEWAY> dev <interfaz>` y el ping debe funcionar. Si aparece un aviso de gateway no conectado, el contenedor no está unido a esa red.
+
+`NET_ADMIN` solo es necesario para el caso B; si aparece `Operation not permitted`, falta esa capacidad.
 
 El compose básico no incluye backups, agente remoto, traps/Syslog publicados, iconos personalizados ni TLS/mTLS. Esas piezas están en archivos opcionales para que cada usuario elija. El overlay principal es [`docker-compose.advanced.yml`](./docker-compose.advanced.yml):
 

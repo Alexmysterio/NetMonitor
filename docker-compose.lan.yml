@@ -2,9 +2,10 @@
 # routes can use that network's gateway.
 #
 # The container gets its address from the external network; no fixed IP is
-# required, so it works with any subnet or DHCP-assigned address. Create or
-# choose the network according to your host (macvlan, ipvlan or bridge) and
-# set its gateway in PRIVATE_ROUTE_GATEWAY.
+# required, so it works with any subnet or DHCP-assigned address. Use a real
+# macvlan/ipvlan on the physical NIC, never a bridge with the same subnet as
+# the LAN: a bridge would hide the real devices from the container. If the
+# Docker host already routes to the LAN, do not use this overlay at all.
 #
 # 1. Set the network name in .env:
 #      LAN_NETWORK=netmonitor-lan
