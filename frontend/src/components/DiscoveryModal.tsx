@@ -16,6 +16,8 @@ interface Found {
   existing_device_ip: string
   ip_mismatch: boolean
   method: string
+  snmp_profile_id: string
+  tcp_port: number
 }
 
 export default function DiscoveryModal({
@@ -112,32 +114,51 @@ export default function DiscoveryModal({
     setError('')
     try {
       const chosen = results.filter(r => selected.has(r.ip))
+      const canvas = await apiGet<{ elements: { element_type: string; device_id: string }[] }>(`/maps/${mapId}/canvas`)
+      const onMap = new Set(canvas.elements.filter(e => e.element_type === 'device' && e.device_id).map(e => e.device_id))
       let dx = 0
       for (const r of chosen) {
+        const method = r.method || 'icmp'
+        const profile = r.snmp_profile_id || selectedProfiles[0] || ''
         let deviceId = r.existing_device_id
         if (!deviceId) {
           const created = await apiSend<{ id: string }>('/devices', 'POST', {
             name: r.name || `Host-${r.ip.replaceAll('.', '-')}`,
             primary_ip: r.ip,
             device_type: r.sys_descr?.toLowerCase().includes('routeros') ? 'router' : 'generic',
-            snmp_profile_id: selectedProfiles[0] || null,
+            snmp_profile_id: profile || null,
             custom_fields: { discovered_sysdescr: r.sys_descr, discovered_sys_object_id: r.sys_object_id },
-            create_default_ping: true,
+            create_default_ping: method === 'icmp',
           })
           deviceId = created.id
         }
-        await apiSend(`/maps/${mapId}/elements`, 'POST', {
-          element_type: 'device',
-          device_id: deviceId,
-          pos_x: position.x + (dx % 4) * 210,
-          pos_y: position.y + Math.floor(dx / 4) * 120,
-          width: 190,
-          height: 96,
-          shape: 'rounded_rect',
-          icon_name: 'server',
-          label_template: '[Device.Name]\n[Device.FirstAddress]',
-        })
-        dx++
+        // A host discovered through TCP/SNMP usually blocks ICMP. Create the
+        // probe that actually works instead of a Ping that would stay down.
+        try {
+          await apiSend(`/devices/${deviceId}/ensure-probe`, 'POST', {
+            method,
+            tcp_port: r.tcp_port || 0,
+            snmp_profile_id: profile,
+          })
+        } catch {
+          // Adding the device to the map must not fail if the probe could not
+          // be adjusted (for example, a restricted user or a missing profile).
+        }
+        if (!onMap.has(deviceId)) {
+          await apiSend(`/maps/${mapId}/elements`, 'POST', {
+            element_type: 'device',
+            device_id: deviceId,
+            pos_x: position.x + (dx % 4) * 210,
+            pos_y: position.y + Math.floor(dx / 4) * 120,
+            width: 190,
+            height: 96,
+            shape: 'rounded_rect',
+            icon_name: 'server',
+            label_template: '[Device.Name]\n[Device.FirstAddress]',
+          })
+          onMap.add(deviceId)
+          dx++
+        }
       }
       onCreated()
       onClose()
@@ -213,6 +234,9 @@ export default function DiscoveryModal({
                   <small>{r.sys_descr || (r.method === 'tcp' ? 'Detectado por TCP' : r.method === 'snmp' ? 'Detectado por SNMP' : 'Sin SNMP · solo ICMP')} {r.sys_object_id ? `· ${r.sys_object_id}` : ''}</small>
                 </span>
                 <span className="mono discovery-ip">{r.ip}</span>
+                <span className={`discovery-method ${r.method || 'icmp'}`}>
+                  {r.method === 'tcp' ? `TCP ${r.tcp_port || ''}`.trim() : r.method === 'snmp' ? 'SNMP' : 'ICMP'}
+                </span>
                 <span className="discovery-latency">{r.latency_ms.toFixed(1)} ms</span>
                 {r.existing_device_id && <span className="existing-pill">ya existe</span>}
               </button>

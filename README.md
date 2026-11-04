@@ -11,7 +11,7 @@ NetMonitor es una alternativa web a los clásicos paneles de monitorización de 
 ## Características
 
 - **Mapas visuales jerárquicos**: mapas y submapas, zonas, etiquetas dinámicas, enlaces con tráfico RX/TX, modo NOC y edición arrastrando nodos.
-- **Descubrimiento de red**: uno o varios rangos CIDR, ICMP + SNMP, hasta 65.536 direcciones por barrido; reutiliza equipos existentes y permite añadirlos al mapa.
+- **Descubrimiento de red**: uno o varios rangos CIDR, ICMP + SNMP + TCP, hasta 65.536 direcciones por barrido; crea la sonda según el método de detección, reutiliza equipos existentes y permite añadirlos al mapa.
 - **Polling multiprotocolo**: ICMP, SNMP v1/v2c/v3, TCP, HTTP/HTTPS, DNS y sondas lógicas.
 - **Inventario SNMP**: sistema, interfaces, direcciones IP, ARP, rutas, LLDP/CDP/MNDP, FDB, Q-BRIDGE, STP y topología L2.
 - **Alertas**: reglas por dispositivo/mapa/etiqueta, retardos, reintentos, ventanas de mantenimiento, festivos, antitormenta, dependencias `Parents` y reconocimiento (ACK).

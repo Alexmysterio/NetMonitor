@@ -425,11 +425,13 @@ func (s *Server) applyDiscoveredHosts(ctx context.Context, networkID, runID stri
 		if err != nil {
 			continue
 		}
-		_, _ = tx.Exec(ctx, `
-			INSERT INTO device_services (device_id, probe_id, custom_name, interval_sec, timeout_ms, down_retries, up_retries)
-			SELECT $1, id, 'Ping', default_interval_sec, default_timeout_ms, default_down_retries, default_up_retries
-			FROM probes WHERE name='Ping' LIMIT 1 ON CONFLICT DO NOTHING
-		`, deviceID)
+		if host.SNMPProfileID != "" && host.SNMPProfileID != n.SNMPProfileID {
+			_, _ = tx.Exec(ctx, `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1`, deviceID, host.SNMPProfileID)
+		}
+		if _, err := ensureDefaultProbe(ctx, tx, deviceID, host.Method, host.TCPPort); err != nil {
+			// Unknown discovery method or unavailable probe: fall back to Ping.
+			_, _ = ensureDefaultProbe(ctx, tx, deviceID, "icmp", 0)
+		}
 		if len(n.ProbeIDs) > 0 {
 			_, _ = tx.Exec(ctx, `
 				INSERT INTO device_services (device_id, probe_id, custom_name, interval_sec, timeout_ms, down_retries, up_retries)

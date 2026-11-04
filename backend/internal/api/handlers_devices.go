@@ -566,6 +566,100 @@ func (s *Server) addService(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "data": map[string]any{"id": id}})
 }
 
+type ensureProbeRequest struct {
+	Method        string `json:"method"`
+	TCPPort       int    `json:"tcp_port"`
+	SNMPProfileID string `json:"snmp_profile_id"`
+}
+
+// ensureDeviceProbe adds a reachability probe that matches how the host was
+// discovered. Devices discovered through SNMP/TCP usually block ICMP, so a
+// default Ping probe would mark them down forever.
+func (s *Server) ensureDeviceProbe(w http.ResponseWriter, r *http.Request) {
+	var req ensureProbeRequest
+	if err := decodeBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	deviceID := chi.URLParam(r, "id")
+	method := normalizeProbeMethod(req.Method)
+	user, _ := auth.UserFrom(r.Context())
+	if !s.canAccessDevice(r.Context(), user, deviceID) {
+		writeError(w, http.StatusForbidden, "sin acceso a este dispositivo")
+		return
+	}
+	if !probeTypeAllowed(user, method) {
+		writeError(w, http.StatusForbidden, "sin permiso para este tipo de sonda")
+		return
+	}
+	var currentProfile string
+	if err := s.pool.QueryRow(r.Context(), `SELECT COALESCE(snmp_profile_id::text,'') FROM devices WHERE id=$1`, deviceID).Scan(&currentProfile); err != nil {
+		writeError(w, http.StatusNotFound, "device not found")
+		return
+	}
+
+	rows, err := s.pool.Query(r.Context(), `
+		SELECT p.probe_type, COALESCE(ds.custom_name,'')
+		FROM device_services ds JOIN probes p ON p.id=ds.probe_id
+		WHERE ds.device_id=$1 AND ds.is_enabled=TRUE
+	`, deviceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var types, names []string
+	for rows.Next() {
+		var typ, name string
+		if rows.Scan(&typ, &name) == nil {
+			types = append(types, typ)
+			names = append(names, name)
+		}
+	}
+	rows.Close()
+	onlyDefaultPing := len(types) == 1 && types[0] == "icmp" && names[0] == "Ping"
+	if len(types) > 0 && !(onlyDefaultPing && method != "icmp") {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
+			"created": false, "reason": "el dispositivo ya tiene sondas activas",
+		}})
+		return
+	}
+
+	if method == "snmp" {
+		profile := strings.TrimSpace(req.SNMPProfileID)
+		if profile == "" {
+			profile = currentProfile
+		}
+		if profile == "" {
+			writeError(w, http.StatusBadRequest, "snmp_profile_id is required for an SNMP probe")
+			return
+		}
+		if _, err := s.pool.Exec(r.Context(), `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1`, deviceID, profile); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	if onlyDefaultPing && method != "icmp" {
+		// Keep the ICMP history but let the discovered protocol decide the
+		// device status.
+		_, _ = s.pool.Exec(r.Context(), `
+			UPDATE device_services ds
+			SET is_critical=false, affects_device_status=false
+			FROM probes p
+			WHERE ds.probe_id=p.id AND ds.device_id=$1 AND p.probe_type='icmp'
+		`, deviceID)
+	}
+
+	created, err := ensureDefaultProbe(r.Context(), s.pool, deviceID, method, req.TCPPort)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
+		"created": created, "method": method,
+	}})
+}
+
 func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
 	_, err := s.pool.Exec(r.Context(), `DELETE FROM device_services WHERE id=$1 AND device_id=$2`,
 		chi.URLParam(r, "serviceID"), chi.URLParam(r, "id"))

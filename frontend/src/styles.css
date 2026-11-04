@@ -658,6 +658,9 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .discovery-info b { font-size: 10.5px; }
 .discovery-info small { font-size: 8.5px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 330px; }
 .discovery-ip { font-size: 9.5px; color: #475569; width: 115px; }
+.discovery-method { font-size: 7.5px; font-weight: 600; border-radius: 999px; padding: 2px 5px; background: #eff6ff; color: #1d4ed8; white-space: nowrap; }
+.discovery-method.tcp { background: #fff7ed; color: #c2410c; }
+.discovery-method.snmp { background: #f5f3ff; color: #6d28d9; }
 .discovery-latency { font-family: var(--mono); font-size: 9px; color: #94a3b8; width: 55px; text-align: right; }
 .existing-pill { font-size: 7.5px; background: #f0fdf4; color: #15803d; border-radius: 999px; padding: 2px 5px; font-weight: 600; }
 .discovery-l2-head { display: flex; align-items: center; gap: 12px; padding: 12px; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 10px; }

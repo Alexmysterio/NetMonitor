@@ -22,6 +22,7 @@ import (
 )
 
 type snmpProfileRow struct {
+	ID          string
 	Version     string
 	Port        int
 	Community   string

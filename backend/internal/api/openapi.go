@@ -24,6 +24,7 @@ func (s *Server) openapi(w http.ResponseWriter, r *http.Request) {
 			"/devices/{id}":               map[string]any{"get": op("Obtener dispositivo", "Detalle"), "put": op("Editar dispositivo", "Actualiza"), "delete": op("Borrar dispositivo", "Elimina")},
 			"/devices/{id}/snmp-info":     map[string]any{"get": op("Inventario SNMP", "Sistema, IPs, interfaces, ARP y rutas")},
 			"/devices/{id}/interfaces":    map[string]any{"get": op("Interfaces SNMP", "Lista de interfaces para enlaces")},
+			"/devices/{id}/ensure-probe":  map[string]any{"post": op("Ajustar sonda", "Crea la sonda ICMP/TCP/SNMP que corresponde al descubrimiento")},
 			"/maps":                       map[string]any{"get": op("Listar mapas", "Mapas visibles"), "post": op("Crear mapa", "Nuevo mapa")},
 			"/maps/{id}/canvas":           map[string]any{"get": op("Canvas", "Elementos y enlaces del mapa")},
 			"/maps/{id}/layout":           map[string]any{"patch": op("Guardar layout", "Posiciones, tamaños y rotación")},

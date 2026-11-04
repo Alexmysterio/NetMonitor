@@ -32,6 +32,8 @@ type discoveryResult struct {
 	ExistingDeviceIP   string  `json:"existing_device_ip"`
 	IPMismatch         bool    `json:"ip_mismatch"`
 	Method             string  `json:"method,omitempty"`
+	SNMPProfileID      string  `json:"snmp_profile_id,omitempty"`
+	TCPPort            int     `json:"tcp_port,omitempty"`
 }
 
 // discoveryScan performs a bounded sweep over one or more IPv4 CIDRs. Small
@@ -249,9 +251,12 @@ func probeHost(ctx context.Context, ip string, profiles []snmpProfileRow, mode s
 			}
 		}
 	}
-	if !res.Alive && tcpFallback && probeTCP(ctx, ip, 300*time.Millisecond) {
-		res.Alive = true
-		res.Method = "tcp"
+	if !res.Alive && tcpFallback {
+		if port := probeTCP(ctx, ip, 300*time.Millisecond); port > 0 {
+			res.Alive = true
+			res.Method = "tcp"
+			res.TCPPort = port
+		}
 	}
 	if !res.Alive {
 		return res
@@ -283,17 +288,17 @@ func probeHost(ctx context.Context, ip string, profiles []snmpProfileRow, mode s
 	return res
 }
 
-func probeTCP(ctx context.Context, ip string, timeout time.Duration) bool {
+func probeTCP(ctx context.Context, ip string, timeout time.Duration) int {
 	ports := []int{22, 23, 80, 443, 3389, 8080, 8291, 8443, 9100}
 	for _, port := range ports {
 		dialer := net.Dialer{Timeout: timeout}
 		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 		if err == nil {
 			_ = conn.Close()
-			return true
+			return port
 		}
 	}
-	return false
+	return 0
 }
 
 func probeSNMP(ctx context.Context, ip string, profile *snmpProfileRow, retries int, timeout time.Duration, res *discoveryResult) bool {
@@ -334,6 +339,7 @@ func probeSNMP(ctx context.Context, ip string, profile *snmpProfileRow, retries 
 	}
 	res.SysDescr = snmpString(packet.Variables[1].Value)
 	res.SysObjectID = snmpString(packet.Variables[2].Value)
+	res.SNMPProfileID = profile.ID
 	return true
 }
 
@@ -387,10 +393,10 @@ func enumerateIPv4(network *net.IPNet) []string {
 func (s *Server) profileByID(ctx context.Context, id string) (snmpProfileRow, error) {
 	var p snmpProfileRow
 	err := s.pool.QueryRow(ctx, `
-		SELECT version, port, community, COALESCE(v3_username,''), COALESCE(v3_security_level,''),
+		SELECT id::text, version, port, community, COALESCE(v3_username,''), COALESCE(v3_security_level,''),
 		       COALESCE(v3_auth_protocol,''), COALESCE(v3_auth_pass,''), COALESCE(v3_priv_protocol,''), COALESCE(v3_priv_pass,'')
 		FROM snmp_profiles WHERE id=$1
-	`, id).Scan(&p.Version, &p.Port, &p.Community, &p.V3User, &p.V3SecLevel,
+	`, id).Scan(&p.ID, &p.Version, &p.Port, &p.Community, &p.V3User, &p.V3SecLevel,
 		&p.V3AuthProto, &p.V3AuthPass, &p.V3PrivProto, &p.V3PrivPass)
 	p.Community, _ = secure.Decrypt(p.Community)
 	p.V3AuthPass, _ = secure.Decrypt(p.V3AuthPass)

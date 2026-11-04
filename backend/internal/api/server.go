@@ -137,6 +137,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/devices/{id}/snmp-info", s.deviceSNMPInfo)
 		r.Get("/devices/{id}/services", s.listServices)
 		r.Post("/devices/{id}/services", s.addService)
+		r.Post("/devices/{id}/ensure-probe", s.ensureDeviceProbe)
 		r.Delete("/devices/{id}/services/{serviceID}", s.deleteService)
 
 		r.Get("/device-types", s.listDeviceTypes)
