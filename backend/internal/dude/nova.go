@@ -542,4 +542,19 @@ func finalizePreview(p *Preview) {
 	sort.Slice(p.Devices, func(i, j int) bool {
 		return strings.ToLower(p.Devices[i].Name) < strings.ToLower(p.Devices[j].Name)
 	})
+	if len(p.Links) > 0 {
+		known := map[string]bool{}
+		for _, device := range p.Devices {
+			known[device.SourceID] = true
+		}
+		orphanLinks := 0
+		for _, link := range p.Links {
+			if !known[link.DeviceA] || !known[link.DeviceB] {
+				orphanLinks++
+			}
+		}
+		if orphanLinks > 0 {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%d enlaces no se podrán crear porque uno de sus extremos es una red, nube o elemento decorativo.", orphanLinks))
+		}
+	}
 }

@@ -26,7 +26,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	ids := uniqueDeviceIDs(req.DeviceIDs)
+	ids := uniqueStrings(req.DeviceIDs)
 	if len(ids) == 0 {
 		writeError(w, http.StatusBadRequest, "selecciona al menos un dispositivo")
 		return
@@ -191,7 +191,7 @@ func (s *Server) bulkDevices(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-func uniqueDeviceIDs(ids []string) []string {
+func uniqueStrings(ids []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {

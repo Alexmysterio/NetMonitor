@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, Database, FileJson, KeyRound, Map as MapIcon, RefreshCw, Upload } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, Database, FileJson, KeyRound, Map as MapIcon, RefreshCw, Upload } from 'lucide-react'
 import { apiGet, apiSend, apiUpload } from '../api'
-import type { DudeImport, DudePreview, MapInfo, SnmpProfile } from '../types'
+import type { DudeImport, DudePreview, MapInfo, Probe, SnmpProfile } from '../types'
 import { Button, EmptyState, Field, Modal, Spinner, StatusBadge, timeAgo } from '../ui'
 
 export default function ImportsPage() {
@@ -11,6 +11,8 @@ export default function ImportsPage() {
   const [snmpProfiles, setSnmpProfiles] = useState<SnmpProfile[]>([])
   const [snmpAssignments, setSnmpAssignments] = useState<Record<string, string>>({})
   const [bulkProfile, setBulkProfile] = useState('')
+  const [probes, setProbes] = useState<Probe[]>([])
+  const [selectedProbes, setSelectedProbes] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -30,17 +32,24 @@ export default function ImportsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [h, m, p] = await Promise.all([
+      const [h, m, p, pr] = await Promise.all([
         apiGet<DudeImport[]>('/imports/dude'),
         apiGet<MapInfo[]>('/maps'),
         apiGet<SnmpProfile[]>('/snmp-profiles'),
+        apiGet<Probe[]>('/probes'),
       ])
-      setHistory(h); setMaps(m); setSnmpProfiles(p)
+      setHistory(h); setMaps(m); setSnmpProfiles(p); setProbes(pr)
     } catch (e) { setError((e as Error).message) } finally { setLoading(false) }
   }
   useEffect(() => { void load() }, [])
 
   const flash = (msg: string) => { setNotice(msg); window.setTimeout(() => setNotice(''), 5000) }
+
+  const defaultProbeSelection = () => {
+    const ping = probes.find(p => p.probe_type === 'icmp' && p.name.toLowerCase() === 'ping')
+      || probes.find(p => p.probe_type === 'icmp')
+    return ping ? [ping.id] : []
+  }
 
   const upload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -57,6 +66,7 @@ export default function ImportsPage() {
       setSelectedDevices(data.preview.devices.map(d => d.source_id))
       setSnmpAssignments({})
       setBulkProfile('')
+      setSelectedProbes(defaultProbeSelection())
       setParentMap('')
       setPrefix('')
       setCreateLinks(true)
@@ -76,6 +86,7 @@ export default function ImportsPage() {
       setSelectedDevices(full.preview.devices.map(d => d.source_id))
       setSnmpAssignments({})
       setBulkProfile('')
+      setSelectedProbes(defaultProbeSelection())
       setParentMap('')
       setPrefix('')
       setCreateLinks(true)
@@ -117,6 +128,7 @@ export default function ImportsPage() {
         map_ids: selectedMaps,
         device_source_ids: selectedDevices,
         snmp_profiles: snmpProfilesPayload,
+        probe_ids: selectedProbes,
         parent_map_id: parentMap,
         name_prefix: prefix,
         create_links: createLinks,
@@ -158,7 +170,7 @@ export default function ImportsPage() {
 
       <div className="import-drop" onClick={() => fileRef.current?.click()}>
         <div className="import-drop-icon"><Database size={26} /></div>
-        <div><b>Selecciona el archivo dude.db o XML</b><span>SQLite de The Dude (hasta 256 MB) y exportaciones XML. No se importan credenciales; puedes asignar perfiles SNMP ya creados en el preview.</span></div>
+        <div><b>Selecciona el archivo dude.db o XML</b><span>SQLite de The Dude (hasta 256 MB) y exportaciones XML. No se importan credenciales; puedes asignar perfiles SNMP y sondas ya creadas en el preview.</span></div>
       </div>
 
       <div className="table-card">
@@ -181,7 +193,7 @@ export default function ImportsPage() {
         )}
       </div>
 
-      <div className="warning-box"><AlertTriangle size={16} /><div><b>El modelo de The Dude es antiguo</b><span>Las credenciales no se migran. En el preview puedes asignar perfiles SNMP ya creados; las credenciales RouterOS se asignan después desde el inventario.</span></div></div>
+      <div className="warning-box"><AlertTriangle size={16} /><div><b>El modelo de The Dude es antiguo</b><span>Las credenciales no se migran. En el preview puedes asignar perfiles SNMP y sondas ya creadas; las credenciales RouterOS se asignan después desde el inventario.</span></div></div>
 
       <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="Preview de importación" subtitle={preview ? `${preview.filename} · ${preview.source_kind}` : ''} width={960} footer={<><Button variant="ghost" onClick={() => setPreviewOpen(false)}>Cerrar</Button>{result ? (firstMapID && <Button variant="primary" onClick={() => navigate(`/maps/${firstMapID}`)}><MapIcon size={14} /> Abrir mapa importado</Button>) : <Button variant="primary" onClick={() => void apply()} disabled={busy || !selectedMaps.length || !selectedDevices.length}>{busy ? 'Importando…' : 'Aplicar importación'}</Button>}</>}>
         {preview && <>
@@ -247,7 +259,30 @@ export default function ImportsPage() {
               )}
             </div>
           )}
-          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.snmp_assigned ?? 0)} con perfil SNMP, {String(result.created_links ?? 0)} enlaces.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
+          {!result && (
+            <div className="snmp-assign">
+              <div className="snmp-assign-head">
+                <div>
+                  <h4 className="section-mini-title"><Activity size={14} /> Sondas para los equipos <span>{selectedProbes.length} seleccionadas</span></h4>
+                  <span className="muted small">Se añaden a todos los equipos seleccionados; las que ya existan no se duplican. Para sondas SNMP, asigna también un perfil SNMP.</span>
+                </div>
+                <div className="snmp-bulk">
+                  <Button size="sm" variant="secondary" onClick={() => setSelectedProbes(probes.map(p => p.id))} disabled={!probes.length}>Seleccionar todas</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setSelectedProbes([])} disabled={!selectedProbes.length}>Limpiar</Button>
+                </div>
+              </div>
+              <div className="probe-checks">
+                {probes.map(p => (
+                  <label key={p.id} className={`probe-check ${selectedProbes.includes(p.id) ? 'active' : ''}`}>
+                    <input type="checkbox" checked={selectedProbes.includes(p.id)} onChange={e => setSelectedProbes(e.target.checked ? [...selectedProbes, p.id] : selectedProbes.filter(id => id !== p.id))} />
+                    <span><b>{p.name}</b><small>{p.probe_type} · cada {p.default_interval_sec}s</small></span>
+                  </label>
+                ))}
+                {!probes.length && <span className="muted small">No hay sondas disponibles.</span>}
+              </div>
+            </div>
+          )}
+          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.snmp_assigned ?? 0)} con perfil SNMP, {String(result.probes_added ?? 0)} sondas añadidas, {String(result.created_links ?? 0)} enlaces{Number(result.skipped_links ?? 0) > 0 ? ` (${String(result.skipped_links)} omitidos)` : ''}.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
         </>}
       </Modal>
     </div>

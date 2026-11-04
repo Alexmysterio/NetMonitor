@@ -21,7 +21,7 @@ NetMonitor es una alternativa web a los clásicos paneles de monitorización de 
 - **Correlación de causa raíz**: supresión de alertas derivadas de una caída padre o de un fallo de topología L2.
 - **RouterOS**: inventario, plantillas, despliegues con aprobación obligatoria, dry-run y snapshots antes/después.
 - **Informes**: PDF/CSV, SLA por cliente, disponibilidad por interfaz, comparativa mensual, programación y exportación local/S3.
-- **Importación de The Dude**: mapas, dispositivos y enlaces desde SQLite/XML, incluidas las bases modernas con objetos Nova en la tabla `objs`; permite asignar perfiles SNMP ya creados a cada equipo o a todos antes de aplicar.
+- **Importación de The Dude**: mapas, dispositivos y enlaces entre equipos desde SQLite/XML, incluidas las bases modernas con objetos Nova en la tabla `objs`; permite asignar perfiles SNMP y sondas ya creadas a cada equipo o a todos antes de aplicar. Los enlaces hacia redes/nubes no importables se avisan y se omiten.
 - **Seguridad**: RBAC por mapa/grupo/dispositivo, API keys, auditoría, cifrado AES-256-GCM de secretos, JWT revocable y sesiones con refresco de permisos.
 - **Agentes remotos**: sondeo desde otras redes, cuotas, reconexión y mTLS opcional.
 - **Alta disponibilidad**: elección de líder por advisory lock de PostgreSQL y fanout de WebSocket con Redis.

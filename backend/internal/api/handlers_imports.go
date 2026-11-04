@@ -125,6 +125,7 @@ type dudeApplyRequest struct {
 	MapIDs          *[]string         `json:"map_ids"`
 	DeviceSourceIDs *[]string         `json:"device_source_ids"`
 	SNMPProfiles    map[string]string `json:"snmp_profiles"`
+	ProbeIDs        []string          `json:"probe_ids"`
 	ParentMapID     string            `json:"parent_map_id"`
 	CreateLinks     *bool             `json:"create_links"`
 	Prefix          string            `json:"name_prefix"`
@@ -202,6 +203,18 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		}
 		if count != len(profileIDs) {
 			writeError(w, http.StatusBadRequest, "uno o más perfiles SNMP ya no existen")
+			return
+		}
+	}
+	probeIDs := uniqueStrings(req.ProbeIDs)
+	if len(probeIDs) > 0 {
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM probes WHERE id = ANY($1::uuid[])`, probeIDs).Scan(&count); err != nil {
+			writeError(w, http.StatusBadRequest, "sonda no válida")
+			return
+		}
+		if count != len(probeIDs) {
+			writeError(w, http.StatusBadRequest, "una o más sondas ya no existen")
 			return
 		}
 	}
@@ -284,7 +297,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		createdMaps = 1
 	}
 
-	createdDevices, reusedDevices, snmpAssigned := 0, 0, 0
+	createdDevices, reusedDevices, snmpAssigned, probesAdded := 0, 0, 0, 0
 	deviceIDs := map[string]string{}
 	skipped := 0
 	var warnings []string
@@ -343,6 +356,24 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			}
 			snmpAssigned++
 		}
+		if len(probeIDs) > 0 {
+			ct, err := tx.Exec(ctx, `
+				INSERT INTO device_services (device_id, probe_id, custom_name,
+					interval_sec, timeout_ms, down_retries, up_retries)
+				SELECT $1, p.id, p.name, p.default_interval_sec, p.default_timeout_ms,
+				       p.default_down_retries, p.default_up_retries
+				FROM probes p
+				WHERE p.id = ANY($2::uuid[])
+				  AND NOT EXISTS (
+				    SELECT 1 FROM device_services ds WHERE ds.device_id=$1 AND ds.probe_id=p.id
+				  )
+			`, deviceID, probeIDs)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			probesAdded += int(ct.RowsAffected())
+		}
 
 		x, y := d.PosX, d.PosY
 		if x == 0 && y == 0 {
@@ -367,27 +398,35 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		`, targetMap, deviceID, x, y, width, height, shape, icon)
 	}
 
-	createdLinks := 0
+	createdLinks, skippedLinks := 0, 0
 	if createLinks {
 		// Reuse only links between map elements that belong to this import.
 		seenLinks := map[string]bool{}
+		linkOrder := order
 		for _, l := range preview.Links {
 			mapID := mapIDs[l.SourceMapID]
 			if mapID == "" {
+				skippedLinks++
 				continue
 			}
 			aSource := deviceIDs[l.DeviceA]
 			bSource := deviceIDs[l.DeviceB]
 			if aSource == "" || bSource == "" {
+				skippedLinks++
 				continue
 			}
-			var aElem, bElem string
-			if tx.QueryRow(ctx, `SELECT id::text FROM map_elements WHERE map_id=$1 AND device_id=$2 LIMIT 1`, mapID, aSource).Scan(&aElem) != nil {
-				continue
+			aElem, err := ensureDudeDeviceElement(ctx, tx, mapID, aSource, linkOrder)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
 			}
-			if tx.QueryRow(ctx, `SELECT id::text FROM map_elements WHERE map_id=$1 AND device_id=$2 LIMIT 1`, mapID, bSource).Scan(&bElem) != nil {
-				continue
+			linkOrder++
+			bElem, err := ensureDudeDeviceElement(ctx, tx, mapID, bSource, linkOrder)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
 			}
+			linkOrder++
 			key := mapID + ":" + aElem + ":" + bElem
 			reverse := mapID + ":" + bElem + ":" + aElem
 			if seenLinks[key] || seenLinks[reverse] {
@@ -407,9 +446,14 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if skippedLinks > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d enlaces no se pudieron crear porque uno de sus extremos no es un dispositivo importado o no está en el mapa.", skippedLinks))
+	}
 	result, _ := json.Marshal(map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
-		"created_links": createdLinks, "snmp_assigned": snmpAssigned, "skipped_devices": skipped, "warnings": warnings,
+		"created_links": createdLinks, "skipped_links": skippedLinks,
+		"snmp_assigned": snmpAssigned, "probes_added": probesAdded,
+		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs,
 	})
 	_, err = tx.Exec(ctx, `
@@ -425,7 +469,9 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
-		"created_links": createdLinks, "snmp_assigned": snmpAssigned, "skipped_devices": skipped, "warnings": warnings,
+		"created_links": createdLinks, "skipped_links": skippedLinks,
+		"snmp_assigned": snmpAssigned, "probes_added": probesAdded,
+		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs, "by": uid.Username,
 	}})
 }
@@ -463,4 +509,29 @@ func dudeShape(ctx context.Context, tx pgx.Tx, deviceType string) (string, strin
 		icon = "server"
 	}
 	return shape, icon
+}
+
+// ensureDudeDeviceElement returns the device element on a map. If the device
+// is on another map (Dude allows the same device on several maps), it creates
+// the missing element so topology links on this map can be imported too.
+func ensureDudeDeviceElement(ctx context.Context, tx pgx.Tx, mapID, deviceID string, index int) (string, error) {
+	var id string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text FROM map_elements WHERE map_id=$1 AND device_id=$2 LIMIT 1
+	`, mapID, deviceID).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	x := float64(80 + (index%8)*190)
+	y := float64(80 + (index/8)*140)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO map_elements (map_id, element_type, device_id, pos_x, pos_y, width, height,
+			shape, icon_name, label_template)
+		VALUES ($1,'device',$2,$3,$4,180,88,'rounded_rect','server',$5)
+		RETURNING id
+	`, mapID, deviceID, x, y, "[Device.Name]\n[Device.FirstAddress]").Scan(&id)
+	return id, err
 }
