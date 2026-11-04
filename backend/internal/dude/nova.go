@@ -386,7 +386,7 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		return Preview{}, false, nil
 	}
 
-	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Links: []Link{}}
+	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Decorations: []Decoration{}, Links: []Link{}}
 	for _, obj := range maps {
 		name := obj.msg.str(0x0010)
 		if name == "" {
@@ -465,6 +465,49 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		p.Devices = append(p.Devices, device)
 	}
 
+	deviceSet := map[uint32]bool{}
+	for _, obj := range devices {
+		deviceSet[obj.id] = true
+	}
+	decorationPositions := map[string]int{}
+	for _, obj := range nodes {
+		mapID, okMap := obj.msg.u32(0x5dc0)
+		if !okMap || mapID == 0xffffffff {
+			continue
+		}
+		deviceID, _ := obj.msg.u32(0x5dc4)
+		if deviceID != 0xffffffff && deviceSet[deviceID] {
+			continue // placement of a real device
+		}
+		x, _ := obj.msg.u32(0x5dc5)
+		y, _ := obj.msg.u32(0x5dc6)
+		name := obj.msg.str(0x0010)
+		if deviceID != 0xffffffff {
+			// A node that points at a map is a submap link; use the map name.
+			if submapName := mapName(p.Maps, novaID(deviceID)); submapName != "" {
+				name = submapName
+			}
+		} else if _, isLinkLabel := obj.msg.field(0x5ddd); isLinkLabel {
+			name = "Enlace"
+		}
+		name = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(name, "\r\n", "\n"), "\r", "\n"))
+		if name == "" {
+			name = "Elemento Dude"
+		}
+		if len(name) > 240 {
+			name = name[:240]
+		}
+		// Dude can place several annotations at the exact same point. Offset
+		// duplicates slightly so they remain readable in NetMonitor.
+		posKey := fmt.Sprintf("%d:%.0f:%.0f", mapID, float64(x), float64(y))
+		offset := float64(decorationPositions[posKey] * 22)
+		decorationPositions[posKey]++
+		p.Decorations = append(p.Decorations, Decoration{
+			SourceID: novaID(obj.id), MapID: novaID(mapID), Name: name,
+			PosX: float64(x), PosY: float64(y) + offset, Width: 180, Height: 60,
+		})
+	}
+
 	for _, obj := range links {
 		deviceA, okA := obj.msg.u32(0x55f1)
 		bSide, okB := obj.msg.u32(0x55f5)
@@ -472,11 +515,8 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 			continue
 		}
 		deviceB := bSide
-		if node, ok := nodesByID[bSide]; ok {
+		if node, ok := nodesByID[bSide]; ok && deviceSet[node.deviceID] {
 			deviceB = node.deviceID
-		}
-		if deviceB == 0xffffffff {
-			continue
 		}
 		mapID, _ := obj.msg.u32(0x55f4)
 		sourceMapID := novaID(mapID)
@@ -547,6 +587,9 @@ func finalizePreview(p *Preview) {
 		for _, device := range p.Devices {
 			known[device.SourceID] = true
 		}
+		for _, decoration := range p.Decorations {
+			known[decoration.SourceID] = true
+		}
 		orphanLinks := 0
 		for _, link := range p.Links {
 			if !known[link.DeviceA] || !known[link.DeviceB] {
@@ -554,7 +597,7 @@ func finalizePreview(p *Preview) {
 			}
 		}
 		if orphanLinks > 0 {
-			p.Warnings = append(p.Warnings, fmt.Sprintf("%d enlaces no se podrán crear porque uno de sus extremos es una red, nube o elemento decorativo.", orphanLinks))
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%d enlaces no se podrán crear porque uno de sus extremos no es un dispositivo ni un elemento decorativo importable.", orphanLinks))
 		}
 	}
 }

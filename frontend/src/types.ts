@@ -688,11 +688,22 @@ export interface DudeLink {
   max_speed_bps: number
 }
 
+export interface DudeDecoration {
+  source_id: string
+  map_id: string
+  name: string
+  pos_x: number
+  pos_y: number
+  width: number
+  height: number
+}
+
 export interface DudePreview {
   source_kind: string
   filename: string
   maps: DudeMap[]
   devices: DudeDevice[]
+  decorations: DudeDecoration[]
   links: DudeLink[]
   warnings: string[]
 }

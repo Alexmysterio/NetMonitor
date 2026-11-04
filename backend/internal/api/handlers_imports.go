@@ -126,6 +126,7 @@ type dudeApplyRequest struct {
 	DeviceSourceIDs *[]string         `json:"device_source_ids"`
 	SNMPProfiles    map[string]string `json:"snmp_profiles"`
 	ProbeIDs        []string          `json:"probe_ids"`
+	DeviceTypes     map[string]string `json:"device_types"`
 	ParentMapID     string            `json:"parent_map_id"`
 	CreateLinks     *bool             `json:"create_links"`
 	Prefix          string            `json:"name_prefix"`
@@ -218,6 +219,31 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	typeAssignments := map[string]string{}
+	var typeNames []string
+	seenTypes := map[string]bool{}
+	for sourceID, typeName := range req.DeviceTypes {
+		typeName = strings.TrimSpace(typeName)
+		if typeName == "" || !selectedDevices[sourceID] {
+			continue
+		}
+		typeAssignments[sourceID] = typeName
+		if !seenTypes[typeName] {
+			seenTypes[typeName] = true
+			typeNames = append(typeNames, typeName)
+		}
+	}
+	if len(typeNames) > 0 {
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM device_types WHERE name = ANY($1::text[])`, typeNames).Scan(&count); err != nil {
+			writeError(w, http.StatusBadRequest, "tipo de dispositivo no válido")
+			return
+		}
+		if count != len(typeNames) {
+			writeError(w, http.StatusBadRequest, "uno o más tipos de dispositivo ya no existen")
+			return
+		}
+	}
 	prefix := strings.TrimSpace(req.Prefix)
 	var parent any
 	if req.ParentMapID != "" {
@@ -297,7 +323,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		createdMaps = 1
 	}
 
-	createdDevices, reusedDevices, snmpAssigned, probesAdded := 0, 0, 0, 0
+	createdDevices, reusedDevices, snmpAssigned, probesAdded, deviceTypesAssigned := 0, 0, 0, 0, 0
 	deviceIDs := map[string]string{}
 	skipped := 0
 	var warnings []string
@@ -322,6 +348,14 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			warnings = append(warnings, fmt.Sprintf("%s: dirección no válida (%s)", d.Name, d.Address))
 			continue
 		}
+		deviceType := d.DeviceType
+		overrideType := typeAssignments[d.SourceID]
+		if overrideType != "" {
+			deviceType = overrideType
+		}
+		if deviceType == "" {
+			deviceType = "generic"
+		}
 		var deviceID string
 		err := tx.QueryRow(ctx, `SELECT id::text FROM devices WHERE primary_ip=$1::inet LIMIT 1`, ip).Scan(&deviceID)
 		if err == nil {
@@ -338,7 +372,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 				 device_type, notes, custom_fields, status)
 				VALUES ($1,$2::inet,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8,$9::jsonb,'unknown')
 				RETURNING id
-			`, d.Name, ip, d.DNSName, strings.ToLower(d.MAC), d.Vendor, d.Model, d.DeviceType, notes, string(custom)).Scan(&deviceID)
+			`, d.Name, ip, d.DNSName, strings.ToLower(d.MAC), d.Vendor, d.Model, deviceType, notes, string(custom)).Scan(&deviceID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
@@ -349,6 +383,13 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		deviceIDs[d.SourceID] = deviceID
+		if overrideType != "" {
+			if _, err := tx.Exec(ctx, `UPDATE devices SET device_type=$2 WHERE id=$1`, deviceID, overrideType); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			deviceTypesAssigned++
+		}
 		if profileID := snmpAssignments[d.SourceID]; profileID != "" {
 			if _, err := tx.Exec(ctx, `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1`, deviceID, profileID); err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
@@ -398,6 +439,51 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		`, targetMap, deviceID, x, y, width, height, shape, icon)
 	}
 
+	createdDecorations := 0
+	decorationElements := map[string]string{}
+	decorationMaps := map[string]string{}
+	for _, decoration := range preview.Decorations {
+		mapID := mapIDs[decoration.MapID]
+		if mapID == "" {
+			continue
+		}
+		name := strings.TrimSpace(decoration.Name)
+		if name == "" {
+			name = "Elemento Dude"
+		}
+		width, height := decoration.Width, decoration.Height
+		if width <= 0 {
+			width = 180
+		}
+		if height <= 0 {
+			height = 60
+		}
+		style, _ := json.Marshal(map[string]any{"dude_source_id": decoration.SourceID, "system": "dude_decoration"})
+		var elemID string
+		err := tx.QueryRow(ctx, `
+			SELECT id::text FROM map_elements
+			WHERE map_id=$1 AND custom_style->>'dude_source_id'=$2 LIMIT 1
+		`, mapID, decoration.SourceID).Scan(&elemID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx, `
+				INSERT INTO map_elements (map_id, element_type, pos_x, pos_y, width, height,
+					label_template, custom_style)
+				VALUES ($1,'text_label',$2,$3,$4,$5,$6,$7::jsonb)
+				RETURNING id
+			`, mapID, decoration.PosX, decoration.PosY, width, height, name, string(style)).Scan(&elemID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			createdDecorations++
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		decorationElements[decoration.SourceID] = elemID
+		decorationMaps[decoration.SourceID] = decoration.MapID
+	}
+
 	createdLinks, skippedLinks := 0, 0
 	if createLinks {
 		// Reuse only links between map elements that belong to this import.
@@ -410,8 +496,17 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			aSource := deviceIDs[l.DeviceA]
+			if aSource == "" {
+				skippedLinks++
+				continue
+			}
 			bSource := deviceIDs[l.DeviceB]
-			if aSource == "" || bSource == "" {
+			bDecoration := decorationElements[l.DeviceB]
+			if bSource == "" && bDecoration == "" {
+				skippedLinks++
+				continue
+			}
+			if bDecoration != "" && decorationMaps[l.DeviceB] != l.SourceMapID {
 				skippedLinks++
 				continue
 			}
@@ -421,12 +516,15 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			linkOrder++
-			bElem, err := ensureDudeDeviceElement(ctx, tx, mapID, bSource, linkOrder)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
+			bElem := bDecoration
+			if bSource != "" {
+				bElem, err = ensureDudeDeviceElement(ctx, tx, mapID, bSource, linkOrder)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				linkOrder++
 			}
-			linkOrder++
 			key := mapID + ":" + aElem + ":" + bElem
 			reverse := mapID + ":" + bElem + ":" + aElem
 			if seenLinks[key] || seenLinks[reverse] {
@@ -447,12 +545,13 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if skippedLinks > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d enlaces no se pudieron crear porque uno de sus extremos no es un dispositivo importado o no está en el mapa.", skippedLinks))
+		warnings = append(warnings, fmt.Sprintf("%d enlaces no se pudieron crear porque uno de sus extremos no es un dispositivo ni un elemento decorativo importable.", skippedLinks))
 	}
 	result, _ := json.Marshal(map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
-		"created_links": createdLinks, "skipped_links": skippedLinks,
-		"snmp_assigned": snmpAssigned, "probes_added": probesAdded,
+		"created_decorations": createdDecorations,
+		"created_links":       createdLinks, "skipped_links": skippedLinks,
+		"snmp_assigned": snmpAssigned, "probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs,
 	})
@@ -470,7 +569,8 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
 		"created_links": createdLinks, "skipped_links": skippedLinks,
-		"snmp_assigned": snmpAssigned, "probes_added": probesAdded,
+		"created_decorations": createdDecorations,
+		"snmp_assigned":       snmpAssigned, "probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs, "by": uid.Username,
 	}})

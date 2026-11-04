@@ -23,6 +23,7 @@ type definition struct {
 	name   string
 	parent string
 	subID  int
+	oid    string
 	body   string
 	object bool
 }
@@ -38,7 +39,9 @@ type Notification struct {
 
 var (
 	objectTypeRe   = regexp.MustCompile(`(?ms)^\s*([A-Za-z][A-Za-z0-9-]*)\s+OBJECT-TYPE\s+(.*?)\s*::=\s*\{\s*([A-Za-z][A-Za-z0-9-]*)\s+(\d+)\s*\}`)
+	numericTypeRe  = regexp.MustCompile(`(?ms)^\s*([A-Za-z][A-Za-z0-9-]*)\s+OBJECT-TYPE\s+(.*?)\s*::=\s*\{\s*([0-9][0-9.\s]*)\s*\}`)
 	objectIDRe     = regexp.MustCompile(`(?ms)^\s*([A-Za-z][A-Za-z0-9-]*)\s+(?:OBJECT\s+IDENTIFIER|MODULE-IDENTITY|OBJECT-IDENTITY)\s+.*?::=\s*\{\s*([A-Za-z][A-Za-z0-9-]*)\s+(\d+)\s*\}`)
+	numericIDRe    = regexp.MustCompile(`(?ms)^\s*([A-Za-z][A-Za-z0-9-]*)\s+(?:OBJECT\s+IDENTIFIER|MODULE-IDENTITY|OBJECT-IDENTITY)\s+.*?::=\s*\{\s*([0-9][0-9.\s]*)\s*\}`)
 	macroOIDRe     = regexp.MustCompile(`(?ms)^\s*([A-Za-z][A-Za-z0-9-]*)\s+(?:OBJECT-GROUP|NOTIFICATION-GROUP|MODULE-COMPLIANCE|AGENT-CAPABILITIES|NOTIFICATION-TYPE)\s+.*?::=\s*\{\s*([A-Za-z][A-Za-z0-9-]*)\s+(\d+)\s*\}`)
 	notificationRe = regexp.MustCompile(`(?ms)^\s*([A-Za-z][A-Za-z0-9-]*)\s+NOTIFICATION-TYPE\s+(.*?)\s*::=\s*\{\s*([A-Za-z][A-Za-z0-9-]*)\s+(\d+)\s*\}`)
 	objectsRe      = regexp.MustCompile(`(?ms)OBJECTS\s*\{([^}]*)\}`)
@@ -145,6 +148,11 @@ func resolveDefinitions(modules map[string]string) (map[string][]definition, map
 	for k, v := range roots {
 		resolved[k] = v
 	}
+	for _, d := range all {
+		if d.oid != "" && resolved[d.name] == "" {
+			resolved[d.name] = d.oid
+		}
+	}
 	byName := map[string]definition{}
 	for _, d := range all {
 		if _, exists := byName[d.name]; !exists {
@@ -176,15 +184,40 @@ func collectDefinitions(text string) []definition {
 		sub, _ := strconv.Atoi(match[4])
 		defs = append(defs, definition{name: match[1], parent: match[3], subID: sub, body: match[2], object: true})
 	}
+	for _, match := range numericTypeRe.FindAllStringSubmatch(clean, -1) {
+		if oid := numericOID(match[3]); oid != "" {
+			defs = append(defs, definition{name: match[1], oid: oid, body: match[2], object: true})
+		}
+	}
 	for _, match := range objectIDRe.FindAllStringSubmatch(clean, -1) {
 		sub, _ := strconv.Atoi(match[3])
 		defs = append(defs, definition{name: match[1], parent: match[2], subID: sub})
+	}
+	for _, match := range numericIDRe.FindAllStringSubmatch(clean, -1) {
+		if oid := numericOID(match[2]); oid != "" {
+			defs = append(defs, definition{name: match[1], oid: oid})
+		}
 	}
 	for _, match := range macroOIDRe.FindAllStringSubmatch(clean, -1) {
 		sub, _ := strconv.Atoi(match[3])
 		defs = append(defs, definition{name: match[1], parent: match[2], subID: sub})
 	}
 	return defs
+}
+
+func numericOID(raw string) string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '.' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	for _, part := range parts {
+		if _, err := strconv.Atoi(part); err != nil {
+			return ""
+		}
+	}
+	return strings.Join(parts, ".")
 }
 
 func buildObjects(defs []definition, resolved map[string]string) []Object {

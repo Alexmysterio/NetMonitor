@@ -53,13 +53,24 @@ type Link struct {
 	SpeedBps    int64  `json:"max_speed_bps"`
 }
 
+type Decoration struct {
+	SourceID string  `json:"source_id"`
+	MapID    string  `json:"map_id"`
+	Name     string  `json:"name"`
+	PosX     float64 `json:"pos_x"`
+	PosY     float64 `json:"pos_y"`
+	Width    float64 `json:"width"`
+	Height   float64 `json:"height"`
+}
+
 type Preview struct {
-	SourceKind string   `json:"source_kind"`
-	Filename   string   `json:"filename"`
-	Maps       []Map    `json:"maps"`
-	Devices    []Device `json:"devices"`
-	Links      []Link   `json:"links"`
-	Warnings   []string `json:"warnings"`
+	SourceKind  string       `json:"source_kind"`
+	Filename    string       `json:"filename"`
+	Maps        []Map        `json:"maps"`
+	Devices     []Device     `json:"devices"`
+	Decorations []Decoration `json:"decorations"`
+	Links       []Link       `json:"links"`
+	Warnings    []string     `json:"warnings"`
 }
 
 // MaxFileSize is the maximum The Dude export accepted for preview. The file is
@@ -116,7 +127,7 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 			return p, nil
 		}
 	}
-	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Links: []Link{}}
+	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Decorations: []Decoration{}, Links: []Link{}}
 
 	mapTable := findTable(tables, "map", "maps", "dude_map", "maps_map")
 	deviceTable := findTable(tables, "device", "devices", "dude_device", "objects")
@@ -252,7 +263,7 @@ func parseXML(filename string, data []byte) (Preview, error) {
 	if err := xml.Unmarshal(data, &root); err != nil {
 		return Preview{}, fmt.Errorf("XML inválido: %w", err)
 	}
-	p := Preview{SourceKind: "xml", Filename: filename, Maps: []Map{}, Devices: []Device{}, Links: []Link{}}
+	p := Preview{SourceKind: "xml", Filename: filename, Maps: []Map{}, Devices: []Device{}, Decorations: []Decoration{}, Links: []Link{}}
 	seen := map[string]bool{}
 	var walk func(node xmlNode, mapID string)
 	walk = func(node xmlNode, mapID string) {

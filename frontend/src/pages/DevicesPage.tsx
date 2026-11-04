@@ -235,31 +235,32 @@ export default function DevicesPage() {
     window.setTimeout(() => setNotice(''), 4000)
   }
 
-  const runBulk = async () => {
+  const runBulk = async (actionOverride?: string) => {
     if (!bulkSelected.length) return
+    const actionName = actionOverride || bulkAction
     setBulkError('')
-    if (bulkAction === 'delete') {
+    if (actionName === 'delete') {
       if (!await confirmAction(`¿Eliminar ${bulkSelected.length} dispositivos? Se quitarán también sus elementos de mapas, sondas e incidencias.`, { title: 'Eliminar dispositivos', confirmLabel: 'Eliminar', danger: true })) return
     }
-    if ((bulkAction === 'tags_add' || bulkAction === 'tags_remove') && !bulkTag.trim()) {
+    if ((actionName === 'tags_add' || actionName === 'tags_remove') && !bulkTag.trim()) {
       setBulkError('Escribe una etiqueta')
       return
     }
-    if (bulkAction === 'snmp_profile' && !bulkProfileID) {
+    if (actionName === 'snmp_profile' && !bulkProfileID) {
       if (!await confirmAction(`¿Quitar el perfil SNMP a ${bulkSelected.length} dispositivos?`, { title: 'Quitar perfil SNMP', confirmLabel: 'Quitar', danger: true })) return
     }
     setBulkBusy(true)
     try {
-      const action = bulkAction === 'monitoring_on' || bulkAction === 'monitoring_off' ? 'monitoring' : bulkAction
+      const action = actionName === 'monitoring_on' || actionName === 'monitoring_off' ? 'monitoring' : actionName
       const payload: Record<string, unknown> = { device_ids: bulkSelected, action }
-      if (bulkAction === 'snmp_profile') payload.snmp_profile_id = bulkProfileID
-      if (bulkAction === 'tags_add' || bulkAction === 'tags_remove') payload.tags = [bulkTag.trim()]
-      if (action === 'monitoring') payload.enabled = bulkAction === 'monitoring_on'
+      if (actionName === 'snmp_profile') payload.snmp_profile_id = bulkProfileID
+      if (actionName === 'tags_add' || actionName === 'tags_remove') payload.tags = [bulkTag.trim()]
+      if (action === 'monitoring') payload.enabled = actionName === 'monitoring_on'
       const res = await apiSend<{ updated?: number; deleted?: number }>('/devices/bulk', 'POST', payload)
-      flash(bulkAction === 'delete'
+      flash(actionName === 'delete'
         ? `${res.deleted ?? bulkSelected.length} dispositivos eliminados`
         : `${res.updated ?? bulkSelected.length} dispositivos actualizados`)
-      if (bulkAction === 'delete') {
+      if (actionName === 'delete') {
         setSelected(null)
         setDetail(null)
       }
@@ -335,8 +336,13 @@ export default function DevicesPage() {
             {(bulkAction === 'tags_add' || bulkAction === 'tags_remove') && (
               <input className="input bulk-tag" value={bulkTag} onChange={e => setBulkTag(e.target.value)} placeholder="Etiqueta" aria-label="Etiqueta" />
             )}
-            <Button size="sm" variant={bulkAction === 'delete' ? 'danger' : 'primary'} onClick={() => void runBulk()} disabled={bulkBusy}>
-              {bulkBusy ? 'Aplicando…' : bulkAction === 'delete' ? <><Trash2 size={13} /> Eliminar</> : 'Aplicar'}
+            {bulkAction !== 'delete' && (
+              <Button size="sm" variant="primary" onClick={() => void runBulk()} disabled={bulkBusy}>
+                {bulkBusy ? 'Aplicando…' : 'Aplicar'}
+              </Button>
+            )}
+            <Button size="sm" variant="danger" onClick={() => void runBulk('delete')} disabled={bulkBusy}>
+              <Trash2 size={13} /> Eliminar seleccionados
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setBulkSelected([])}>Limpiar</Button>
           </div>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, Bell, BellRing, BookOpen, Check, Copy, Globe, KeyRound, Mail, MessageSquare, Pause, Pencil, Play, Plus, Radio, ScrollText, Send, Server, Shield, SlidersHorizontal, Trash2, UserRound, Webhook } from 'lucide-react'
+import { Activity, AlertTriangle, Bell, BellRing, BookOpen, Check, Copy, Globe, KeyRound, Mail, MessageSquare, Pause, Pencil, Play, Plus, Radio, ScrollText, Send, Server, Shield, SlidersHorizontal, Trash2, UserRound, Webhook } from 'lucide-react'
 import { apiGet, apiSend, apiUpload, getUser } from '../api'
 import { confirmAction } from '../confirm'
 import type { Agent, NotificationChannel, SnmpProfile } from '../types'
@@ -38,8 +38,8 @@ const CHANNEL_ICON: Record<string, React.ReactNode> = {
 function channelSummary(c: NotificationChannel): string {
   const cfg = (c.config || {}) as any
   switch (c.channel_type) {
-    case 'telegram': return `Chat ID: ${cfg.chat_id || '—'}`
-    case 'email': return `${cfg.host || 'SMTP'} → ${cfg.to || '—'}`
+    case 'telegram': return `Chat ID: ${cfg.chat_id || '-'}`
+    case 'email': return `${cfg.host || 'SMTP'} → ${cfg.to || '-'}`
     case 'webhook': return String(cfg.url || 'Webhook configurado')
     case 'slack': case 'discord': case 'teams': case 'ntfy': return 'Destino configurado'
     case 'web_audio': return 'Audio/TTS del navegador NOC'
@@ -48,6 +48,65 @@ function channelSummary(c: NotificationChannel): string {
     case 'pagerduty': case 'opsgenie': case 'sms': return 'Credenciales configuradas'
     default: return 'Canal configurado'
   }
+}
+
+type ChannelField = {
+  key: string
+  label: string
+  placeholder?: string
+  hint?: string
+  type?: string
+  required?: boolean
+  options?: string[]
+}
+
+const CHANNEL_FIELDS: Record<string, ChannelField[]> = {
+  email: [
+    { key: 'host', label: 'Servidor SMTP', placeholder: 'smtp.example.com', required: true },
+    { key: 'port', label: 'Puerto', type: 'number', placeholder: '587' },
+    { key: 'from', label: 'Remitente', placeholder: 'netmonitor@example.com', required: true },
+    { key: 'to', label: 'Destinatario', placeholder: 'guardia@example.com', required: true },
+    { key: 'username', label: 'Usuario SMTP' },
+    { key: 'password', label: 'Contraseña SMTP', type: 'password' },
+  ],
+  webhook: [{ key: 'url', label: 'URL del webhook', placeholder: 'https://example.com/hook', type: 'url', required: true }],
+  slack: [{ key: 'url', label: 'Webhook de Slack', placeholder: 'https://hooks.slack.com/services/...', type: 'url', required: true }],
+  discord: [{ key: 'url', label: 'Webhook de Discord', placeholder: 'https://discord.com/api/webhooks/...', type: 'url', required: true }],
+  teams: [{ key: 'url', label: 'Webhook de Microsoft Teams', placeholder: 'https://...webhook.office.com/...', type: 'url', required: true }],
+  ntfy: [{ key: 'url', label: 'URL de ntfy', placeholder: 'https://ntfy.sh/mi-tema', type: 'url', required: true, hint: 'Incluye el tema en la URL.' }],
+  pagerduty: [{ key: 'routing_key', label: 'Routing key', placeholder: 'Clave de integración de PagerDuty', required: true }],
+  opsgenie: [
+    { key: 'api_key', label: 'API key', placeholder: 'Clave de API de Opsgenie', required: true },
+    { key: 'region', label: 'Región', options: ['us', 'eu'] },
+  ],
+  sms: [
+    { key: 'account_sid', label: 'Account SID de Twilio', required: true },
+    { key: 'auth_token', label: 'Auth token', type: 'password', required: true },
+    { key: 'from', label: 'Número remitente', placeholder: '+34...', required: true },
+    { key: 'to', label: 'Número destinatario', placeholder: '+34...', required: true },
+  ],
+  syslog: [
+    { key: 'host', label: 'Host Syslog', placeholder: '127.0.0.1', required: true },
+    { key: 'port', label: 'Puerto', type: 'number', placeholder: '514' },
+  ],
+  agent_action: [
+    { key: 'agent_id', label: 'Agente', type: 'agent', required: true },
+    { key: 'action', label: 'Acción', options: ['icmp', 'tcp', 'http', 'dns', 'ssh', 'smtp', 'ftp'], required: true },
+    { key: 'target', label: 'Objetivo', placeholder: 'IP o host', required: true },
+    { key: 'port', label: 'Puerto (TCP)', type: 'number' },
+  ],
+  web_audio: [],
+}
+
+const CHANNEL_DEFAULTS: Record<string, Record<string, string>> = {
+  email: { port: '587' },
+  syslog: { host: '127.0.0.1', port: '514' },
+  opsgenie: { region: 'us' },
+  agent_action: { action: 'icmp' },
+}
+
+function defaultChannelConfig(type: string): Record<string, string> {
+  return { ...(CHANNEL_DEFAULTS[type] || {}) }
 }
 
 export default function SettingsPage() {
@@ -96,6 +155,7 @@ export default function SettingsPage() {
   const [mwForm, setMwForm] = useState({ name: '', scopeType: 'device', scopeID: '', scopeTag: '', starts: '', ends: '', reason: '' })
   const [mibImporting, setMibImporting] = useState(false)
   const [mibResult, setMibResult] = useState('')
+  const [mibError, setMibError] = useState('')
   const [testingChannel, setTestingChannel] = useState('')
   const mibRef = useRef<HTMLInputElement>(null)
   const sessionUser = getUser()
@@ -103,7 +163,8 @@ export default function SettingsPage() {
   const isEditor = sessionUser?.role !== 'viewer'
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [channelForm, setChannelForm] = useState({ name: '', type: 'telegram', config: '{"bot_token":"","chat_id":""}', enabled: true })
+  const [channelForm, setChannelForm] = useState({ name: '', type: 'telegram', enabled: true })
+  const [channelConfig, setChannelConfig] = useState<Record<string, string>>({})
   const [telegramToken, setTelegramToken] = useState('')
   const [telegramChat, setTelegramChat] = useState('')
   const [channelEditing, setChannelEditing] = useState<NotificationChannel | null>(null)
@@ -239,25 +300,39 @@ export default function SettingsPage() {
     setError('')
     setChannelEditing(channel || null)
     const cfg = (channel?.config || {}) as any
-    setTelegramToken(channel?.channel_type === 'telegram' ? String(cfg.bot_token || '') : '')
-    setTelegramChat(channel?.channel_type === 'telegram' ? String(cfg.chat_id || '') : '')
+    const type = channel?.channel_type || 'telegram'
+    setTelegramToken(type === 'telegram' ? String(cfg.bot_token || '') : '')
+    setTelegramChat(type === 'telegram' ? String(cfg.chat_id || '') : '')
+    setChannelConfig(Object.fromEntries(
+      Object.entries(cfg).map(([key, value]) => [key, value === null || value === undefined ? '' : String(value)]),
+    ))
     setChannelForm(channel
-      ? { name: channel.name, type: channel.channel_type, config: JSON.stringify(channel.config, null, 2), enabled: channel.is_enabled }
-      : { name: '', type: 'telegram', config: '{"bot_token":"","chat_id":""}', enabled: true })
+      ? { name: channel.name, type, enabled: channel.is_enabled }
+      : { name: '', type: 'telegram', enabled: true })
     setChannelOpen(true)
   }
 
   const saveChannel = async () => {
     setError(''); setSaving(true)
     try {
-      let config: unknown
+      let config: Record<string, unknown>
       if (channelForm.type === 'telegram') {
         const token = telegramToken.trim()
         const chat = telegramChat.trim()
         if (!token || !chat) throw new Error('Bot token y chat ID son obligatorios')
-        config = { bot_token: token, chat_id: chat }
+        config = { ...((channelEditing?.config || {}) as Record<string, unknown>), bot_token: token, chat_id: chat }
       } else {
-        try { config = JSON.parse(channelForm.config) } catch { throw new Error('Config JSON inválido') }
+        config = { ...((channelEditing?.config || {}) as Record<string, unknown>) }
+        const fields = CHANNEL_FIELDS[channelForm.type] || []
+        for (const field of fields) {
+          const raw = (channelConfig[field.key] || '').trim()
+          if (!raw) {
+            if (field.required) throw new Error(`${field.label} es obligatorio`)
+            delete config[field.key]
+            continue
+          }
+          config[field.key] = field.type === 'number' ? Number(raw) : raw
+        }
       }
       const payload = { name: channelForm.name, channel_type: channelForm.type, config, is_enabled: channelForm.enabled }
       if (channelEditing) await apiSend(`/notification-channels/${channelEditing.id}`, 'PUT', payload)
@@ -705,7 +780,7 @@ export default function SettingsPage() {
     const files = Array.from(event.target.files || [])
     event.target.value = ''
     if (!files.length) return
-    setError(''); setMibResult(''); setMibImporting(true)
+    setMibError(''); setMibResult(''); setMibImporting(true)
     try {
       const modules = await Promise.all(files.map(async file => ({
         module: file.name.replace(/\.(mib|txt|my)$/i, ''),
@@ -716,7 +791,7 @@ export default function SettingsPage() {
       setMibResult(`${Object.keys(data.modules).length} módulos · ${total} objetos importados`)
       setMibs(await apiGet<any[]>('/mibs'))
     } catch (e) {
-      setError((e as Error).message)
+      setMibError((e as Error).message)
     } finally {
       setMibImporting(false)
     }
@@ -941,10 +1016,11 @@ export default function SettingsPage() {
       {tab === 'mibs' && (
         <div className="rules-list">
           <div className="table-toolbar">
-            <span className="muted small">Catálogo MIB para traducir OIDs en SNMP Walk. Se aceptan definiciones OBJECT-TYPE / OBJECT IDENTIFIER habituales.</span>
+            <span className="muted small">Catálogo MIB para traducir OIDs en SNMP Walk. Si el MIB importa otros módulos (IMPORTS), selecciónalos también en el mismo lote.</span>
             {isEditor && <Button variant="primary" size="sm" onClick={() => mibRef.current?.click()} disabled={mibImporting}><BookOpen size={14} /> {mibImporting ? 'Importando…' : 'Importar MIB'}</Button>}
             <input ref={mibRef} type="file" multiple accept=".mib,.txt,.my,text/plain" hidden onChange={importMIB} />
           </div>
+          {mibError && <div className="form-error"><AlertTriangle size={14} /> {mibError}</div>}
           {mibResult && <div className="mib-result"><Check size={14} /> {mibResult}</div>}
           {mibs.map(m => (
             <div className="rule-row" key={m.module}>
@@ -1072,20 +1148,44 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <Modal open={channelOpen} onClose={() => { setChannelOpen(false); setChannelEditing(null) }} title={channelEditing ? 'Editar canal de aviso' : 'Nuevo canal de aviso'} subtitle="Telegram, Email, Webhook, Slack, Discord, ntfy o Syslog." width={620} footer={<><Button variant="ghost" onClick={() => { setChannelOpen(false); setChannelEditing(null) }}>Cancelar</Button><Button variant="primary" onClick={saveChannel} disabled={saving}>{saving ? 'Guardando…' : channelEditing ? 'Guardar cambios' : 'Crear canal'}</Button></>}>
+      <Modal open={channelOpen} onClose={() => { setChannelOpen(false); setChannelEditing(null) }} title={channelEditing ? 'Editar canal de aviso' : 'Nuevo canal de aviso'} subtitle="Telegram, Email, Webhook, Slack, Discord, Teams, ntfy, Syslog, PagerDuty, Opsgenie o SMS." width={620} footer={<><Button variant="ghost" onClick={() => { setChannelOpen(false); setChannelEditing(null) }}>Cancelar</Button><Button variant="primary" onClick={saveChannel} disabled={saving}>{saving ? 'Guardando…' : channelEditing ? 'Guardar cambios' : 'Crear canal'}</Button></>}>
         <div className="form-grid two">
           <Field label="Nombre"><input className="input" value={channelForm.name} onChange={e => setChannelForm({ ...channelForm, name: e.target.value })} placeholder="Guardia Telegram" /></Field>
-          <Field label="Tipo"><select className="input" value={channelForm.type} onChange={e => setChannelForm({ ...channelForm, type: e.target.value })}><option value="telegram">Telegram</option><option value="email">Email SMTP</option><option value="webhook">Webhook</option><option value="slack">Slack</option><option value="discord">Discord</option><option value="teams">Microsoft Teams</option><option value="ntfy">ntfy.sh</option><option value="web_audio">Navegador NOC</option><option value="agent_action">Acción en agente</option><option value="syslog">Syslog</option><option value="pagerduty">PagerDuty</option><option value="opsgenie">Opsgenie</option><option value="sms">SMS Twilio</option></select></Field>
+          <Field label="Tipo"><select className="input" value={channelForm.type} onChange={e => {
+            const type = e.target.value
+            setChannelForm({ ...channelForm, type })
+            setChannelConfig(defaultChannelConfig(type))
+            setError('')
+          }}><option value="telegram">Telegram</option><option value="email">Email SMTP</option><option value="webhook">Webhook</option><option value="slack">Slack</option><option value="discord">Discord</option><option value="teams">Microsoft Teams</option><option value="ntfy">ntfy.sh</option><option value="web_audio">Navegador NOC</option><option value="agent_action">Acción en agente</option><option value="syslog">Syslog</option><option value="pagerduty">PagerDuty</option><option value="opsgenie">Opsgenie</option><option value="sms">SMS Twilio</option></select></Field>
         </div>
         {channelForm.type === 'telegram' ? (
           <div className="form-grid two">
             <Field label="Bot token" hint="Token de @BotFather."><input className="input mono" value={telegramToken} onChange={e => setTelegramToken(e.target.value)} placeholder="123456789:AA…" /></Field>
             <Field label="Chat ID" hint="ID del chat, grupo o canal."><input className="input mono" value={telegramChat} onChange={e => setTelegramChat(e.target.value)} placeholder="541173076" /></Field>
           </div>
+        ) : (CHANNEL_FIELDS[channelForm.type] || []).length > 0 ? (
+          <div className="form-grid two">
+            {(CHANNEL_FIELDS[channelForm.type] || []).map(field => (
+              <Field key={field.key} label={field.label} hint={field.hint}>
+                {field.type === 'agent' ? (
+                  <select className="input" value={channelConfig[field.key] || ''} onChange={e => setChannelConfig({ ...channelConfig, [field.key]: e.target.value })}>
+                    <option value="">— Selecciona agente</option>
+                    {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}{agent.online ? ' · online' : ' · offline'}</option>)}
+                  </select>
+                ) : field.options ? (
+                  <select className="input" value={channelConfig[field.key] || field.options[0]} onChange={e => setChannelConfig({ ...channelConfig, [field.key]: e.target.value })}>
+                    {field.options.map(option => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                ) : field.type === 'textarea' ? (
+                  <textarea className="input textarea" rows={3} value={channelConfig[field.key] || ''} onChange={e => setChannelConfig({ ...channelConfig, [field.key]: e.target.value })} placeholder={field.placeholder} />
+                ) : (
+                  <input className="input" type={field.type || 'text'} value={channelConfig[field.key] || ''} onChange={e => setChannelConfig({ ...channelConfig, [field.key]: e.target.value })} placeholder={field.placeholder} />
+                )}
+              </Field>
+            ))}
+          </div>
         ) : (
-          <Field label="Configuración JSON" hint='Webhook: {"url":"https://…"} · Email: {"host":"smtp","port":587,"from":"…","to":"…","username":"…","password":"…"} · PagerDuty: {"routing_key":"…"} · Opsgenie: {"api_key":"…","region":"us|eu"} · SMS: {"account_sid":"…","auth_token":"…","from":"+…","to":"+…"}'>
-            <textarea className="input textarea mono" rows={5} value={channelForm.config} onChange={e => setChannelForm({ ...channelForm, config: e.target.value })} />
-          </Field>
+          <div className="muted small">Este tipo de canal no necesita configuración adicional.</div>
         )}
         <label className="check-label"><input type="checkbox" checked={channelForm.enabled} onChange={e => setChannelForm({ ...channelForm, enabled: e.target.checked })} /> Canal activo</label>
         {error && <div className="form-error">{error}</div>}

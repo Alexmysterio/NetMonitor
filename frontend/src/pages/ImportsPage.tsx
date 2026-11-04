@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Activity, AlertTriangle, CheckCircle2, Database, FileJson, KeyRound, Map as MapIcon, RefreshCw, Upload } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, Database, FileJson, KeyRound, Map as MapIcon, RefreshCw, Server, Upload } from 'lucide-react'
 import { apiGet, apiSend, apiUpload } from '../api'
 import type { DudeImport, DudePreview, MapInfo, Probe, SnmpProfile } from '../types'
 import { Button, EmptyState, Field, Modal, Spinner, StatusBadge, timeAgo } from '../ui'
@@ -13,6 +13,9 @@ export default function ImportsPage() {
   const [bulkProfile, setBulkProfile] = useState('')
   const [probes, setProbes] = useState<Probe[]>([])
   const [selectedProbes, setSelectedProbes] = useState<string[]>([])
+  const [deviceTypes, setDeviceTypes] = useState<{ name: string; label: string }[]>([])
+  const [typeAssignments, setTypeAssignments] = useState<Record<string, string>>({})
+  const [bulkType, setBulkType] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -32,13 +35,14 @@ export default function ImportsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [h, m, p, pr] = await Promise.all([
+      const [h, m, p, pr, dt] = await Promise.all([
         apiGet<DudeImport[]>('/imports/dude'),
         apiGet<MapInfo[]>('/maps'),
         apiGet<SnmpProfile[]>('/snmp-profiles'),
         apiGet<Probe[]>('/probes'),
+        apiGet<{ name: string; label: string }[]>('/device-types'),
       ])
-      setHistory(h); setMaps(m); setSnmpProfiles(p); setProbes(pr)
+      setHistory(h); setMaps(m); setSnmpProfiles(p); setProbes(pr); setDeviceTypes(dt)
     } catch (e) { setError((e as Error).message) } finally { setLoading(false) }
   }
   useEffect(() => { void load() }, [])
@@ -49,6 +53,12 @@ export default function ImportsPage() {
     const ping = probes.find(p => p.probe_type === 'icmp' && p.name.toLowerCase() === 'ping')
       || probes.find(p => p.probe_type === 'icmp')
     return ping ? [ping.id] : []
+  }
+
+  const defaultTypeAssignments = (list: { source_id: string; device_type: string }[]) => {
+    const next: Record<string, string> = {}
+    for (const device of list) next[device.source_id] = device.device_type || 'generic'
+    return next
   }
 
   const upload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,6 +77,8 @@ export default function ImportsPage() {
       setSnmpAssignments({})
       setBulkProfile('')
       setSelectedProbes(defaultProbeSelection())
+      setTypeAssignments(defaultTypeAssignments(data.preview.devices))
+      setBulkType('')
       setParentMap('')
       setPrefix('')
       setCreateLinks(true)
@@ -87,6 +99,8 @@ export default function ImportsPage() {
       setSnmpAssignments({})
       setBulkProfile('')
       setSelectedProbes(defaultProbeSelection())
+      setTypeAssignments(defaultTypeAssignments(full.preview.devices))
+      setBulkType('')
       setParentMap('')
       setPrefix('')
       setCreateLinks(true)
@@ -117,6 +131,21 @@ export default function ImportsPage() {
     })
   }
 
+  const assignType = (sourceID: string, typeName: string) => {
+    setTypeAssignments(prev => ({ ...prev, [sourceID]: typeName }))
+  }
+
+  const applyTypeToAll = () => {
+    if (!preview || !bulkType) return
+    setTypeAssignments(prev => {
+      const next = { ...prev }
+      for (const device of preview.devices) {
+        if (selectedDevices.includes(device.source_id)) next[device.source_id] = bulkType
+      }
+      return next
+    })
+  }
+
   const apply = async () => {
     if (!preview) return
     setBusy(true); setError('')
@@ -124,11 +153,15 @@ export default function ImportsPage() {
       const snmpProfilesPayload = Object.fromEntries(
         Object.entries(snmpAssignments).filter(([sourceID, profileID]) => profileID && selectedDevices.includes(sourceID)),
       )
+      const deviceTypesPayload = Object.fromEntries(
+        Object.entries(typeAssignments).filter(([sourceID, typeName]) => typeName && selectedDevices.includes(sourceID)),
+      )
       const data = await apiSend<Record<string, unknown>>(`/imports/dude/${importID}/apply`, 'POST', {
         map_ids: selectedMaps,
         device_source_ids: selectedDevices,
         snmp_profiles: snmpProfilesPayload,
         probe_ids: selectedProbes,
+        device_types: deviceTypesPayload,
         parent_map_id: parentMap,
         name_prefix: prefix,
         create_links: createLinks,
@@ -200,6 +233,7 @@ export default function ImportsPage() {
           <div className="import-summary">
             <div><b>{preview.maps.length}</b><span>mapas</span></div>
             <div><b>{preview.devices.length}</b><span>equipos</span></div>
+            <div><b>{preview.decorations?.length ?? 0}</b><span>decoraciones</span></div>
             <div><b>{preview.links.length}</b><span>enlaces</span></div>
             <div><b>{preview.warnings.length}</b><span>avisos</span></div>
           </div>
@@ -263,6 +297,39 @@ export default function ImportsPage() {
             <div className="snmp-assign">
               <div className="snmp-assign-head">
                 <div>
+                  <h4 className="section-mini-title"><Server size={14} /> Tipo de dispositivo</h4>
+                  <span className="muted small">Se aplica a los equipos seleccionados. Por defecto se mantiene el tipo detectado en The Dude.</span>
+                </div>
+                <div className="snmp-bulk">
+                  <select className="input" value={bulkType} onChange={e => setBulkType(e.target.value)}>
+                    <option value="">Mantener tipo detectado</option>
+                    {deviceTypes.map(t => <option key={t.name} value={t.name}>{t.label}</option>)}
+                  </select>
+                  <Button size="sm" variant="secondary" onClick={applyTypeToAll} disabled={!bulkType || !selectedDevices.length}>Aplicar a todos</Button>
+                </div>
+              </div>
+              {!deviceTypes.length ? (
+                <span className="muted small">No hay tipos de dispositivo disponibles.</span>
+              ) : selectedDevices.length === 0 ? (
+                <span className="muted small">Selecciona al menos un equipo.</span>
+              ) : (
+                <div className="snmp-assign-list">
+                  {preview.devices.filter(d => selectedDevices.includes(d.source_id)).map(d => (
+                    <div key={d.source_id} className="snmp-assign-row">
+                      <span><b>{d.name}</b><small className="mono">{d.address || 'sin IP'}</small></span>
+                      <select className="input" value={typeAssignments[d.source_id] || d.device_type || 'generic'} onChange={e => assignType(d.source_id, e.target.value)}>
+                        {deviceTypes.map(t => <option key={t.name} value={t.name}>{t.label}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {!result && (
+            <div className="snmp-assign">
+              <div className="snmp-assign-head">
+                <div>
                   <h4 className="section-mini-title"><Activity size={14} /> Sondas para los equipos <span>{selectedProbes.length} seleccionadas</span></h4>
                   <span className="muted small">Se añaden a todos los equipos seleccionados; las que ya existan no se duplican. Para sondas SNMP, asigna también un perfil SNMP.</span>
                 </div>
@@ -282,7 +349,7 @@ export default function ImportsPage() {
               </div>
             </div>
           )}
-          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.snmp_assigned ?? 0)} con perfil SNMP, {String(result.probes_added ?? 0)} sondas añadidas, {String(result.created_links ?? 0)} enlaces{Number(result.skipped_links ?? 0) > 0 ? ` (${String(result.skipped_links)} omitidos)` : ''}.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
+          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.device_types_assigned ?? 0)} con tipo asignado, {String(result.snmp_assigned ?? 0)} con perfil SNMP, {String(result.probes_added ?? 0)} sondas añadidas, {String(result.created_decorations ?? 0)} decoraciones, {String(result.created_links ?? 0)} enlaces{Number(result.skipped_links ?? 0) > 0 ? ` (${String(result.skipped_links)} omitidos)` : ''}.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
         </>}
       </Modal>
     </div>

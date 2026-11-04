@@ -720,11 +720,11 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .shape-picker { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .add-node-body .empty-state { padding: 16px; }
 .device-detail { display: flex; flex-direction: column; gap: 10px; }
-.device-detail-top { display: flex; align-items: center; gap: 11px; }
+.device-detail-top { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; }
 .device-hero { width: 48px; height: 48px; border-radius: 13px; background: var(--st-soft); color: var(--st); display: flex; align-items: center; justify-content: center; }
-.device-detail-status { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.device-detail-status { flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 3px; }
 .device-detail-status > span { font-size: 9.5px; color: #64748b; }
-.device-detail-actions { display: flex; gap: 5px; }
+.device-detail-actions { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; border-top: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9; padding: 7px 0; }
 .custom-fields { display: flex; flex-wrap: wrap; gap: 5px; }
 .custom-fields span { background: #f8fafc; border: 1px solid #eef2f7; border-radius: 6px; padding: 4px 7px; font-size: 9.5px; color: #475569; display: flex; gap: 4px; }
@@ -1179,7 +1179,7 @@ body.noc-flash { animation: nocFlash .6s ease-in-out 3; }
 .import-drop b { display: block; font-size: 13px; }
 .import-drop span { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
 .imports-table .data-row { grid-template-columns: minmax(180px,1.4fr) 100px minmax(180px,1.2fr) 110px 100px 70px; }
-.import-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.import-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
 .import-summary div { padding: 10px; border-radius: 10px; background: #f8fafc; border: 1px solid var(--line-2); text-align: center; }
 .import-summary b { display: block; font-size: 20px; letter-spacing: -.04em; }
 .import-summary span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }

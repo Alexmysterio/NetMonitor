@@ -44,6 +44,7 @@ import {
   Wifi,
 } from 'lucide-react'
 import { api, apiGet, apiSend, apiUpload, getUser } from '../api'
+import { confirmAction } from '../confirm'
 import { useRealtime } from '../realtime'
 import type { Agent, CanvasData, CanvasElement, CanvasLink, Shape } from '../types'
 import { Button, EmptyState, Field, IconButton, Modal, Spinner, StatusBadge, StatusDot, formatBps, statusClass } from '../ui'
@@ -362,6 +363,23 @@ function MapView() {
       })
       setMapSettingsOpen(false)
       await refreshAfterChange()
+    } catch (e) {
+      alert((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const deleteMap = async () => {
+    if (!mapId || !data) return
+    if (!await confirmAction(`¿Eliminar el mapa "${data.map.name}"? Se eliminarán sus elementos y enlaces.`, {
+      title: 'Eliminar mapa', confirmLabel: 'Eliminar', danger: true,
+    })) return
+    setSaving(true)
+    try {
+      await apiSend(`/maps/${mapId}`, 'DELETE')
+      const parent = data.map.parent_map_id
+      navigate(parent ? `/maps/${parent}` : '/maps')
     } catch (e) {
       alert((e as Error).message)
     } finally {
@@ -746,7 +764,11 @@ function MapView() {
       )}
 
       <Modal open={mapSettingsOpen} onClose={() => setMapSettingsOpen(false)} title="Ajustes del mapa" subtitle={data?.map?.name} width={680}
-        footer={<><Button variant="ghost" onClick={() => setMapSettingsOpen(false)}>Cancelar</Button><Button variant="primary" onClick={saveMapSettings} disabled={saving}>{saving ? 'Guardando…' : 'Guardar ajustes'}</Button></>}>
+        footer={<>
+          {canEdit && <Button variant="danger" style={{ marginRight: 'auto' }} onClick={() => void deleteMap()} disabled={saving}><Trash2 size={14} /> Eliminar mapa</Button>}
+          <Button variant="ghost" onClick={() => setMapSettingsOpen(false)}>Cancelar</Button>
+          <Button variant="primary" onClick={saveMapSettings} disabled={saving}>{saving ? 'Guardando…' : 'Guardar ajustes'}</Button>
+        </>}>
         <div className="form-grid two">
           <Field label="Nombre"><input className="input" value={mapForm.name} onChange={e => setMapForm({ ...mapForm, name: e.target.value })} /></Field>
           <Field label="Color de fondo"><input className="input color-input" type="color" value={mapForm.background_color} onChange={e => setMapForm({ ...mapForm, background_color: e.target.value })} /></Field>
