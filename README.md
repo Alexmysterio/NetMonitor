@@ -245,61 +245,59 @@ La imagen `netmonitor:latest` está publicada como pública: no necesitas inicia
 
 ### Rutas a redes privadas
 
-Por defecto el contenedor solo conoce la red bridge de Docker y usa su gateway para todo. Para que el descubrimiento y el polling alcancen la LAN/VPN aunque el host tenga rutas distintas, NetMonitor puede enviar todo el tráfico RFC1918 por el gateway de una segunda interfaz:
+Por defecto el contenedor solo conoce la red bridge de Docker y usa su gateway para todo. Si la LAN/VPN está en otra interfaz, NetMonitor puede enviar el tráfico RFC1918 por el gateway de esa interfaz. La configuración no depende de la IP del contenedor: puede ser fija o asignada por Docker, y la interfaz se detecta automáticamente.
 
-```env
-PRIVATE_ROUTE_GATEWAY=10.240.1.1
-PRIVATE_ROUTE_DEV=eth0
-PRIVATE_ROUTES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
-```
-
-- `PRIVATE_ROUTE_GATEWAY`: gateway de la red LAN/VPN conectada al contenedor. Si se deja vacío, no se toca el enrutado y todo sigue saliendo por Docker.
-- `PRIVATE_ROUTE_DEV`: interfaz del contenedor. Si se deja vacío, se detecta a partir de la ruta directa al gateway.
-- `PRIVATE_ROUTES`: CIDR separados por comas o espacios. Por defecto, las tres redes privadas RFC1918.
-
-El contenedor necesita `NET_ADMIN` (ya está en el compose básico) para aplicar las rutas. La ruta por defecto a Internet no cambia: sigue saliendo por el gateway de Docker. Las rutas propias de Docker (`172.x.0.0/16`, DNS, PostgreSQL, Redis) son más específicas y siguen funcionando.
-
-La segunda interfaz debe existir en el contenedor. Si no la tienes definida en tu compose, usa el overlay [`docker-compose.lan.yml`](./docker-compose.lan.yml), que adjunta una red externa y mantiene el gateway de Docker como ruta por defecto (`gw_priority`).
-
-En Linux con acceso directo a la interfaz de la LAN/VPN, crea una red macvlan:
+**1. Adjunta el contenedor a la red de la LAN/VPN.** Si ya la tienes en tu compose, no hagas nada. Si no, usa el overlay [`docker-compose.lan.yml`](./docker-compose.lan.yml), que adjunta una red externa por nombre sin fijar ninguna IP:
 
 ```bash
+# Ejemplo con macvlan en Linux; ajusta subred, gateway e interfaz del host
 docker network create -d macvlan \
-  --subnet=10.240.1.0/24 \
-  --gateway=10.240.1.1 \
-  -o parent=eth0 netmonitor-lan
+  --subnet=<LAN_CIDR> \
+  --gateway=<LAN_GATEWAY> \
+  -o parent=<HOST_IF> netmonitor-lan
 ```
 
-En Docker Desktop/Windows, o cuando el host ya enruta hacia `10.240.1.0/24`, una red bridge con esa subred también sirve; el contenedor sale por el host y este aplica su ruta:
+También sirve una red bridge si el host ya enruta hacia esa red:
 
 ```bash
 docker network create \
-  --subnet=10.240.1.0/24 \
-  --gateway=10.240.1.1 \
+  --subnet=<LAN_CIDR> \
+  --gateway=<LAN_GATEWAY> \
   netmonitor-lan
 ```
 
-Después define la red y la IP del contenedor:
+**2. Configura el gateway en `.env`:**
 
 ```env
+PRIVATE_ROUTE_GATEWAY=<LAN_GATEWAY>
+PRIVATE_ROUTE_DEV=
+PRIVATE_ROUTES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 LAN_NETWORK=netmonitor-lan
-LAN_IPV4=10.240.1.2
 ```
+
+- `PRIVATE_ROUTE_GATEWAY`: gateway de la red LAN/VPN. Si se deja vacío, las rutas se desactivan y todo sigue saliendo por Docker.
+- `PRIVATE_ROUTE_DEV`: interfaz del contenedor (`eth0`, `eth1`...). Si se deja vacío, se detecta desde la ruta directa al gateway.
+- `PRIVATE_ROUTES`: CIDR separados por comas o espacios. Por defecto, las tres redes privadas RFC1918.
+- `LAN_NETWORK`: solo si usas el overlay; es el nombre de la red externa ya existente.
+
+**3. Arranca:**
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
 ```
 
-Ajusta `parent`, `subnet` y la IP a tu servidor. Si tu versión de Docker no soporta `gw_priority`, el gateway de la red LAN podría pasar a ser el predeterminado; en ese caso actualiza Docker o mantén la red LAN con salida a Internet.
+Si ya adjuntaste la red en tu propio compose, usa `docker compose up -d`.
 
-Comprueba:
+El contenedor necesita `NET_ADMIN` (ya está en `docker-compose.yml`) para aplicar las rutas. La ruta por defecto a Internet no cambia: sigue saliendo por el gateway de Docker. Las rutas propias de Docker (`172.x.0.0/16`, DNS, PostgreSQL, Redis) son más específicas y siguen funcionando. El overlay usa `gw_priority` para mantener el gateway de Docker como predeterminado; requiere una versión reciente de Docker. Si tu versión no lo soporta, el gateway de la LAN podría pasar a ser el predeterminado.
+
+**Comprobar:**
 
 ```bash
-docker compose exec netmonitor ip route get 10.255.2.1
-docker compose exec netmonitor ping -c 2 10.255.2.1
+docker compose exec netmonitor ip route get <IP_PRIVADA>
+docker compose exec netmonitor ip route get 1.1.1.1
 ```
 
-Debe mostrar `via 10.240.1.1 dev eth0` (o `dev eth1`, según el orden de interfaces). Si aparece `Operation not permitted`, falta `NET_ADMIN`; si aparece un aviso de gateway no conectado, el contenedor no está unido a la red `10.240.1.0/24`.
+La primera debe mostrar `via <LAN_GATEWAY> dev <interfaz>`; la segunda, el gateway de Docker. Si aparece `Operation not permitted`, falta `NET_ADMIN`; si aparece un aviso de gateway no conectado, el contenedor no está unido a la red de ese gateway.
 
 El compose básico no incluye backups, agente remoto, traps/Syslog publicados, iconos personalizados ni TLS/mTLS. Esas piezas están en archivos opcionales para que cada usuario elija. El overlay principal es [`docker-compose.advanced.yml`](./docker-compose.advanced.yml):
 
@@ -328,8 +326,7 @@ Toda la configuración se pasa por variables de entorno. Las principales:
 | `PRIVATE_ROUTE_GATEWAY` | Gateway LAN/VPN para el tráfico RFC1918; vacío lo desactiva | Vacío |
 | `PRIVATE_ROUTE_DEV` | Interfaz del contenedor; vacío la autodetecta | Vacío |
 | `PRIVATE_ROUTES` | CIDR privados que usan ese gateway | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` |
-| `LAN_NETWORK` | Red externa del overlay `docker-compose.lan.yml` | `netmonitor-lan` |
-| `LAN_IPV4` | IP fija del contenedor en esa red | `10.240.1.2` |
+| `LAN_NETWORK` | Red externa para el overlay `docker-compose.lan.yml`; sin IP fija | Vacío |
 | `POSTGRES_PASSWORD` | Contraseña de PostgreSQL | Cambiar obligatoriamente |
 | `JWT_SECRET` | Firma de sesiones JWT | Cambiar obligatoriamente |
 | `ENCRYPTION_KEY` | Clave de cifrado en reposo | Cambiar obligatoriamente |

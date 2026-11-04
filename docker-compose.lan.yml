@@ -1,18 +1,20 @@
-# Optional LAN/VPN attachment for NetMonitor.
-# Use this overlay when the container must reach private networks through a
-# dedicated interface, for example a macvlan on 10.240.1.0/24.
+# Optional: attach NetMonitor to an existing LAN/VPN network so the private
+# routes can use that network's gateway.
 #
-# Create the external network once on the Docker host:
-#   docker network create -d macvlan \
-#     --subnet=10.240.1.0/24 \
-#     --gateway=10.240.1.1 \
-#     -o parent=eth0 netmonitor-lan
+# The container gets its address from the external network; no fixed IP is
+# required, so it works with any subnet or DHCP-assigned address. Create or
+# choose the network according to your host (macvlan, ipvlan or bridge) and
+# set its gateway in PRIVATE_ROUTE_GATEWAY.
 #
-# Then start the stack with:
-#   docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
+# 1. Set the network name in .env:
+#      LAN_NETWORK=netmonitor-lan
+#      PRIVATE_ROUTE_GATEWAY=<gateway-of-that-network>
 #
-# Set LAN_NETWORK and LAN_IPV4 in .env. PRIVATE_ROUTE_GATEWAY must point to the
-# gateway of that network (10.240.1.1 in this example).
+# 2. Start the stack with this overlay:
+#      docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
+#
+# If the container is already attached to the LAN/VPN network in your own
+# compose, you do not need this overlay; just set PRIVATE_ROUTE_* in .env.
 
 services:
   netmonitor:
@@ -22,7 +24,6 @@ services:
         gw_priority: 100
       # The LAN/VPN network is only used by the explicit private routes.
       netmonitor-lan:
-        ipv4_address: ${LAN_IPV4:?Set LAN_IPV4 in .env}
         gw_priority: 0
 
 networks:
