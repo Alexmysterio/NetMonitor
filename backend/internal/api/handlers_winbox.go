@@ -155,13 +155,14 @@ func (s *Server) redeemWinboxTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) downloadWinboxBridge(w http.ResponseWriter, r *http.Request) {
-	server := requestBaseURL(r)
-	bridge := strings.ReplaceAll(winboxBridgeScript, "__SERVER__", strings.ReplaceAll(server, "'", "''"))
-	bridgeB64 := base64.StdEncoding.EncodeToString([]byte(bridge))
-	installer := strings.ReplaceAll(winboxBridgeInstaller, "__BRIDGE_B64__", bridgeB64)
-	encoded := encodePowerShell(installer)
+	// Keep the downloaded .cmd small: cmd.exe has a ~8191 character command
+	// line limit, and embedding the whole installer made Windows reject it.
+	// The small bootstrap downloads and runs the real installer.
+	installURL := requestBaseURL(r) + "/api/v1/tools/winbox/install.ps1"
+	bootstrap := strings.ReplaceAll(winboxBootstrapScript, "__INSTALL_URL__", strings.ReplaceAll(installURL, "'", "''"))
+	encoded := encodePowerShell(bootstrap)
 	cmd := "@echo off\r\n" +
-		"title NetMonitor Winbox Bridge\r\n" +
+		"title NetMonitor Access Bridge\r\n" +
 		"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand " + encoded + "\r\n" +
 		"if errorlevel 1 pause\r\n"
 
@@ -169,6 +170,20 @@ func (s *Server) downloadWinboxBridge(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="netmonitor-winbox-bridge.cmd"`)
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(cmd))
+}
+
+// downloadWinboxInstallerPS1 is public on purpose: it only contains the local
+// bridge script and the public NetMonitor URL, never credentials. Keeping it
+// as a separate download avoids the Windows command-line length limit.
+func (s *Server) downloadWinboxInstallerPS1(w http.ResponseWriter, r *http.Request) {
+	server := requestBaseURL(r)
+	bridge := strings.ReplaceAll(winboxBridgeScript, "__SERVER__", strings.ReplaceAll(server, "'", "''"))
+	bridgeB64 := base64.StdEncoding.EncodeToString([]byte(bridge))
+	installer := strings.ReplaceAll(winboxBridgeInstaller, "__BRIDGE_B64__", bridgeB64)
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(installer))
 }
 
 func requestBaseURL(r *http.Request) string {
@@ -206,6 +221,15 @@ func encodePowerShell(script string) string {
 	}
 	return base64.StdEncoding.EncodeToString(out)
 }
+
+const winboxBootstrapScript = `$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$client = New-Object System.Net.WebClient
+$client.Proxy = $null
+$installer = Join-Path $env:TEMP 'netmonitor-winbox-install.ps1'
+$client.DownloadFile('__INSTALL_URL__', $installer)
+& $installer
+`
 
 const winboxBridgeScript = `param([string]$LaunchUri)
 $ErrorActionPreference = 'Stop'

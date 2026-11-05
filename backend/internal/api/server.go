@@ -64,6 +64,7 @@ func (s *Server) Router() http.Handler {
 	}
 	r.Post("/api/v1/telegram/webhook/{id}", s.telegramWebhook)
 	r.Post("/api/v1/tools/winbox/redeem", s.redeemWinboxTicket)
+	r.Get("/api/v1/tools/winbox/install.ps1", s.downloadWinboxInstallerPS1)
 	r.Get("/ws", s.handleWS)
 
 	r.Route("/api/v1", func(r chi.Router) {
