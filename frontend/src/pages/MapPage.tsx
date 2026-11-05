@@ -361,6 +361,7 @@ function MapView() {
         label_align: mapForm.label_align,
         default_device_shape: mapForm.default_device_shape,
       })
+      window.dispatchEvent(new Event('netmonitor:maps-changed'))
       setMapSettingsOpen(false)
       await refreshAfterChange()
     } catch (e) {
@@ -378,6 +379,7 @@ function MapView() {
     setSaving(true)
     try {
       await apiSend(`/maps/${mapId}`, 'DELETE')
+      window.dispatchEvent(new Event('netmonitor:maps-changed'))
       const parent = data.map.parent_map_id
       navigate(parent ? `/maps/${parent}` : '/maps')
     } catch (e) {

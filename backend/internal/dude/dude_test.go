@@ -118,6 +118,111 @@ func novaTestIPv4(a, b, c, d byte) uint32 {
 	return uint32(a) | uint32(b)<<8 | uint32(c)<<16 | uint32(d)<<24
 }
 
+func TestParseDudeNovaSubmapsAndLinkLabels(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dude.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE objs (id INTEGER PRIMARY KEY, obj BLOB)`); err != nil {
+		t.Fatal(err)
+	}
+	newMap := func(id uint32, name string) []byte {
+		return novaTestBlob(
+			novaTestField{tag: 0x61a8, tcode: 0x08, value: novaTestU32(1)},
+			novaTestField{tag: 0x0001, tcode: 0x08, value: novaTestU32(id)},
+			novaTestField{tag: 0x0010, tcode: 0x21, value: novaTestString(name)},
+		)
+	}
+	newNode := func(id, mapID, ref uint32) []byte {
+		return novaTestBlob(
+			novaTestField{tag: 0x5dc0, tcode: 0x08, value: novaTestU32(mapID)},
+			novaTestField{tag: 0x5dc4, tcode: 0x08, value: novaTestU32(ref)},
+			novaTestField{tag: 0x5dc5, tcode: 0x08, value: novaTestU32(100)},
+			novaTestField{tag: 0x5dc6, tcode: 0x08, value: novaTestU32(200)},
+			novaTestField{tag: 0x0001, tcode: 0x08, value: novaTestU32(id)},
+			novaTestField{tag: 0x0010, tcode: 0x21, value: novaTestString("")},
+		)
+	}
+	newDevice := func(id uint32, name string, last byte) []byte {
+		return novaTestBlob(
+			novaTestField{tag: 0x1f40, tcode: 0x88, value: novaTestU32Array(novaTestIPv4(10, 0, 0, last))},
+			novaTestField{tag: 0x0001, tcode: 0x08, value: novaTestU32(id)},
+			novaTestField{tag: 0x0010, tcode: 0x21, value: novaTestString(name)},
+		)
+	}
+	linkLabel := novaTestBlob(
+		novaTestField{tag: 0x5dc0, tcode: 0x08, value: novaTestU32(20)},
+		novaTestField{tag: 0x5dc4, tcode: 0x08, value: novaTestU32(0xffffffff)},
+		novaTestField{tag: 0x5dc5, tcode: 0x08, value: novaTestU32(300)},
+		novaTestField{tag: 0x5dc6, tcode: 0x08, value: novaTestU32(400)},
+		novaTestField{tag: 0x5ddb, tcode: 0x08, value: novaTestU32(21)},
+		novaTestField{tag: 0x5ddc, tcode: 0x08, value: novaTestU32(22)},
+		novaTestField{tag: 0x5ddd, tcode: 0x08, value: novaTestU32(50)},
+		novaTestField{tag: 0x0001, tcode: 0x08, value: novaTestU32(34)},
+		novaTestField{tag: 0x0010, tcode: 0x21, value: novaTestString("")},
+	)
+	linkBlob := novaTestBlob(
+		novaTestField{tag: 0x55f1, tcode: 0x08, value: novaTestU32(42)},
+		novaTestField{tag: 0x55f4, tcode: 0x08, value: novaTestU32(20)},
+		novaTestField{tag: 0x55f5, tcode: 0x08, value: novaTestU32(34)},
+		novaTestField{tag: 0x55f6, tcode: 0x08, value: novaTestU32(0xffffffff)},
+		novaTestField{tag: 0x0001, tcode: 0x08, value: novaTestU32(50)},
+	)
+	objects := []struct {
+		id   uint32
+		blob []byte
+	}{
+		{10, newMap(10, "General")},
+		{20, newMap(20, "Sitio A")},
+		{30, newMap(30, "Sitio B")},
+		{11, newNode(11, 10, 20)},
+		{31, newNode(31, 10, 30)},
+		{21, newNode(21, 20, 10)},
+		{22, newNode(22, 20, 42)},
+		{33, newNode(33, 30, 43)},
+		{34, linkLabel},
+		{42, newDevice(42, "Router", 42)},
+		{43, newDevice(43, "Switch", 43)},
+		{50, linkBlob},
+	}
+	for _, object := range objects {
+		if _, err := db.Exec(`INSERT INTO objs (id, obj) VALUES (?,?)`, object.id, object.blob); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(context.Background(), "dude.db", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parents := map[string]string{}
+	for _, m := range p.Maps {
+		parents[m.SourceID] = m.ParentSourceID
+	}
+	if parents["20"] != "10" || parents["30"] != "10" || parents["10"] != "" {
+		t.Fatalf("unexpected hierarchy: %+v", parents)
+	}
+	if len(p.Devices) != 2 || len(p.Submaps) != 3 || len(p.Decorations) != 0 || len(p.Links) != 1 {
+		t.Fatalf("unexpected preview: devices=%d submaps=%d decorations=%d links=%d", len(p.Devices), len(p.Submaps), len(p.Decorations), len(p.Links))
+	}
+	for _, submap := range p.Submaps {
+		if submap.SourceID == "34" {
+			t.Fatalf("link label imported as submap: %+v", submap)
+		}
+	}
+	link := p.Links[0]
+	if link.NodeA != "21" || link.NodeB != "22" || link.DeviceA != "" || link.DeviceB != "42" || link.SourceMapID != "20" {
+		t.Fatalf("unexpected link endpoints: %+v", link)
+	}
+}
+
 func TestParseDudeNovaSQLite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dude.db")
 	db, err := sql.Open("sqlite", path)

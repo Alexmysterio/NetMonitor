@@ -167,6 +167,7 @@ export default function ImportsPage() {
         create_links: createLinks,
       })
       setResult(data)
+      window.dispatchEvent(new Event('netmonitor:maps-changed'))
       flash('Importación aplicada')
       await load()
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
@@ -233,6 +234,7 @@ export default function ImportsPage() {
           <div className="import-summary">
             <div><b>{preview.maps.length}</b><span>mapas</span></div>
             <div><b>{preview.devices.length}</b><span>equipos</span></div>
+            <div><b>{preview.submaps?.length ?? 0}</b><span>submapas</span></div>
             <div><b>{preview.decorations?.length ?? 0}</b><span>decoraciones</span></div>
             <div><b>{preview.links.length}</b><span>enlaces</span></div>
             <div><b>{preview.warnings.length}</b><span>avisos</span></div>
@@ -349,7 +351,7 @@ export default function ImportsPage() {
               </div>
             </div>
           )}
-          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.device_types_assigned ?? 0)} con tipo asignado, {String(result.snmp_assigned ?? 0)} con perfil SNMP, {String(result.probes_added ?? 0)} sondas añadidas, {String(result.created_decorations ?? 0)} decoraciones, {String(result.created_links ?? 0)} enlaces{Number(result.skipped_links ?? 0) > 0 ? ` (${String(result.skipped_links)} omitidos)` : ''}.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
+          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.device_types_assigned ?? 0)} con tipo asignado, {String(result.snmp_assigned ?? 0)} con perfil SNMP, {String(result.probes_added ?? 0)} sondas añadidas, {String(result.created_submaps ?? 0)} submapas, {String(result.created_decorations ?? 0)} decoraciones, {String(result.created_links ?? 0)} enlaces{Number(result.skipped_links ?? 0) > 0 ? ` (${String(result.skipped_links)} omitidos)` : ''}.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
         </>}
       </Modal>
     </div>

@@ -324,7 +324,9 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createdDevices, reusedDevices, snmpAssigned, probesAdded, deviceTypesAssigned := 0, 0, 0, 0, 0
+	createdSubmaps := 0
 	deviceIDs := map[string]string{}
+	nodeElements := map[string]string{}
 	skipped := 0
 	var warnings []string
 	order := 0
@@ -430,18 +432,102 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			height = 88
 		}
 		shape, icon := dudeShape(ctx, tx, d.DeviceType)
-		_, _ = tx.Exec(ctx, `
+		var elemID string
+		err = tx.QueryRow(ctx, `
 			INSERT INTO map_elements (map_id, element_type, device_id, pos_x, pos_y, width, height,
 			 shape, icon_name, label_template)
 			SELECT $1,'device',$2,$3,$4,$5,$6,$7,$8,m.default_device_label
 			FROM maps m WHERE m.id=$1
 			AND NOT EXISTS (SELECT 1 FROM map_elements WHERE map_id=$1 AND device_id=$2)
-		`, targetMap, deviceID, x, y, width, height, shape, icon)
+			RETURNING id
+		`, targetMap, deviceID, x, y, width, height, shape, icon).Scan(&elemID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx, `
+				SELECT id::text FROM map_elements
+				WHERE map_id=$1 AND element_type='device' AND device_id=$2 LIMIT 1
+			`, targetMap, deviceID).Scan(&elemID)
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if d.NodeID != "" {
+			nodeElements[d.NodeID] = elemID
+		}
+	}
+
+	sourceParent := map[string]string{}
+	for _, m := range preview.Maps {
+		if m.ParentSourceID != "" {
+			sourceParent[m.SourceID] = m.ParentSourceID
+		}
+	}
+	for _, submap := range preview.Submaps {
+		parentMapID := mapIDs[submap.MapID]
+		targetMapID := mapIDs[submap.TargetSourceID]
+		if parentMapID == "" || targetMapID == "" || parentMapID == targetMapID {
+			continue
+		}
+		styleMap := map[string]any{"dude_source_id": submap.SourceID, "system": "dude_submap"}
+		if sourceParent[submap.MapID] == submap.TargetSourceID {
+			// The Dude places a link back to the parent map inside every child.
+			// Mark it as the standard back element instead of duplicating it.
+			styleMap["system"] = "back"
+		}
+		style, _ := json.Marshal(styleMap)
+		width, height := submap.Width, submap.Height
+		if width <= 0 {
+			width = 190
+		}
+		if height <= 0 {
+			height = 110
+		}
+		name := strings.TrimSpace(submap.Name)
+		if name == "" {
+			name = "Submapa Dude"
+		}
+		var elemID string
+		err := tx.QueryRow(ctx, `
+			SELECT id::text FROM map_elements
+			WHERE map_id=$1 AND custom_style->>'dude_source_id'=$2 LIMIT 1
+		`, parentMapID, submap.SourceID).Scan(&elemID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx, `
+				INSERT INTO map_elements (map_id, element_type, target_submap_id, pos_x, pos_y, width, height,
+				 shape, icon_name, show_icon, label_template, z_index, custom_style)
+				VALUES ($1,'submap',$2,$3,$4,$5,$6,'rounded_rect','map',TRUE,$7,10,$8::jsonb)
+				RETURNING id
+			`, parentMapID, targetMapID, submap.PosX, submap.PosY, width, height, name, string(style)).Scan(&elemID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			createdSubmaps++
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		nodeElements[submap.SourceID] = elemID
+	}
+	for sourceID, parentSourceID := range sourceParent {
+		childID := mapIDs[sourceID]
+		parentID := mapIDs[parentSourceID]
+		if childID == "" || parentID == "" {
+			continue
+		}
+		_, _ = tx.Exec(ctx, `
+			INSERT INTO map_elements (map_id, element_type, target_submap_id, pos_x, pos_y, width, height,
+			 shape, icon_name, show_icon, label_template, z_index, custom_style)
+			SELECT $1,'submap',$2,40,40,150,150,'circle','building',TRUE,'Volver [Submap.Name]',10,'{"system":"back"}'::jsonb
+			WHERE NOT EXISTS (
+				SELECT 1 FROM map_elements
+				WHERE map_id=$1 AND element_type='submap' AND target_submap_id=$2
+			)
+		`, childID, parentID)
 	}
 
 	createdDecorations := 0
 	decorationElements := map[string]string{}
-	decorationMaps := map[string]string{}
 	for _, decoration := range preview.Decorations {
 		mapID := mapIDs[decoration.MapID]
 		if mapID == "" {
@@ -481,7 +567,6 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		decorationElements[decoration.SourceID] = elemID
-		decorationMaps[decoration.SourceID] = decoration.MapID
 	}
 
 	createdLinks, skippedLinks := 0, 0
@@ -495,35 +580,43 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 				skippedLinks++
 				continue
 			}
-			aSource := deviceIDs[l.DeviceA]
-			if aSource == "" {
-				skippedLinks++
-				continue
+			aElem := nodeElements[l.NodeA]
+			if aElem == "" {
+				aElem = decorationElements[l.NodeA]
 			}
-			bSource := deviceIDs[l.DeviceB]
-			bDecoration := decorationElements[l.DeviceB]
-			if bSource == "" && bDecoration == "" {
-				skippedLinks++
-				continue
-			}
-			if bDecoration != "" && decorationMaps[l.DeviceB] != l.SourceMapID {
-				skippedLinks++
-				continue
-			}
-			aElem, err := ensureDudeDeviceElement(ctx, tx, mapID, aSource, linkOrder)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			linkOrder++
-			bElem := bDecoration
-			if bSource != "" {
-				bElem, err = ensureDudeDeviceElement(ctx, tx, mapID, bSource, linkOrder)
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, err.Error())
-					return
+			if aElem == "" && l.DeviceA != "" {
+				if aSource := deviceIDs[l.DeviceA]; aSource != "" {
+					var err error
+					aElem, err = ensureDudeDeviceElement(ctx, tx, mapID, aSource, linkOrder)
+					if err != nil {
+						writeError(w, http.StatusInternalServerError, err.Error())
+						return
+					}
+					linkOrder++
 				}
-				linkOrder++
+			}
+			if aElem == "" {
+				skippedLinks++
+				continue
+			}
+			bElem := nodeElements[l.NodeB]
+			if bElem == "" {
+				bElem = decorationElements[l.NodeB]
+			}
+			if bElem == "" && l.DeviceB != "" {
+				if bSource := deviceIDs[l.DeviceB]; bSource != "" {
+					var err error
+					bElem, err = ensureDudeDeviceElement(ctx, tx, mapID, bSource, linkOrder)
+					if err != nil {
+						writeError(w, http.StatusInternalServerError, err.Error())
+						return
+					}
+					linkOrder++
+				}
+			}
+			if bElem == "" || aElem == bElem {
+				skippedLinks++
+				continue
 			}
 			key := mapID + ":" + aElem + ":" + bElem
 			reverse := mapID + ":" + bElem + ":" + aElem
@@ -549,8 +642,8 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	result, _ := json.Marshal(map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
-		"created_decorations": createdDecorations,
-		"created_links":       createdLinks, "skipped_links": skippedLinks,
+		"created_decorations": createdDecorations, "created_submaps": createdSubmaps,
+		"created_links": createdLinks, "skipped_links": skippedLinks,
 		"snmp_assigned": snmpAssigned, "probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs,
@@ -569,8 +662,8 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
 		"created_links": createdLinks, "skipped_links": skippedLinks,
-		"created_decorations": createdDecorations,
-		"snmp_assigned":       snmpAssigned, "probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
+		"created_decorations": createdDecorations, "created_submaps": createdSubmaps,
+		"snmp_assigned": snmpAssigned, "probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs, "by": uid.Username,
 	}})

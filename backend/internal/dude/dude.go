@@ -27,6 +27,7 @@ type Map struct {
 
 type Device struct {
 	SourceID    string   `json:"source_id"`
+	NodeID      string   `json:"node_id"`
 	Name        string   `json:"name"`
 	Address     string   `json:"address"`
 	DNSName     string   `json:"dns_name"`
@@ -47,10 +48,23 @@ type Device struct {
 type Link struct {
 	SourceID    string `json:"source_id"`
 	SourceMapID string `json:"source_map_id"`
+	NodeA       string `json:"node_a"`
+	NodeB       string `json:"node_b"`
 	DeviceA     string `json:"device_a"`
 	DeviceB     string `json:"device_b"`
 	LinkType    string `json:"link_type"`
 	SpeedBps    int64  `json:"max_speed_bps"`
+}
+
+type Submap struct {
+	SourceID       string  `json:"source_id"`
+	MapID          string  `json:"map_id"`
+	TargetSourceID string  `json:"target_source_id"`
+	Name           string  `json:"name"`
+	PosX           float64 `json:"pos_x"`
+	PosY           float64 `json:"pos_y"`
+	Width          float64 `json:"width"`
+	Height         float64 `json:"height"`
 }
 
 type Decoration struct {
@@ -68,6 +82,7 @@ type Preview struct {
 	Filename    string       `json:"filename"`
 	Maps        []Map        `json:"maps"`
 	Devices     []Device     `json:"devices"`
+	Submaps     []Submap     `json:"submaps"`
 	Decorations []Decoration `json:"decorations"`
 	Links       []Link       `json:"links"`
 	Warnings    []string     `json:"warnings"`
@@ -127,7 +142,7 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 			return p, nil
 		}
 	}
-	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Decorations: []Decoration{}, Links: []Link{}}
+	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}}
 
 	mapTable := findTable(tables, "map", "maps", "dude_map", "maps_map")
 	deviceTable := findTable(tables, "device", "devices", "dude_device", "objects")
@@ -263,7 +278,7 @@ func parseXML(filename string, data []byte) (Preview, error) {
 	if err := xml.Unmarshal(data, &root); err != nil {
 		return Preview{}, fmt.Errorf("XML inválido: %w", err)
 	}
-	p := Preview{SourceKind: "xml", Filename: filename, Maps: []Map{}, Devices: []Device{}, Decorations: []Decoration{}, Links: []Link{}}
+	p := Preview{SourceKind: "xml", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}}
 	seen := map[string]bool{}
 	var walk func(node xmlNode, mapID string)
 	walk = func(node xmlNode, mapID string) {

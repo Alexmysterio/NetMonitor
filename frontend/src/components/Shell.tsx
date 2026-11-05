@@ -76,6 +76,14 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     if (refreshKey) void load()
   }, [refreshKey])
 
+  useEffect(() => {
+    const reload = () => {
+      if (getToken()) void load()
+    }
+    window.addEventListener('netmonitor:maps-changed', reload)
+    return () => window.removeEventListener('netmonitor:maps-changed', reload)
+  }, [])
+
   const tree = useMemo(() => {
     const children = new Map<string, MapInfo[]>()
     const roots: MapInfo[] = []

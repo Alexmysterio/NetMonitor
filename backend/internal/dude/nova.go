@@ -386,7 +386,7 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		return Preview{}, false, nil
 	}
 
-	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Decorations: []Decoration{}, Links: []Link{}}
+	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}}
 	for _, obj := range maps {
 		name := obj.msg.str(0x0010)
 		if name == "" {
@@ -395,20 +395,58 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		p.Maps = append(p.Maps, Map{SourceID: novaID(obj.id), Name: name})
 	}
 
-	nodesByID := map[uint32]novaNode{}
-	deviceNode := map[uint32]novaNode{}
+	mapSet := map[uint32]bool{}
+	mapOrder := make([]uint32, 0, len(maps))
+	for _, obj := range maps {
+		mapSet[obj.id] = true
+		mapOrder = append(mapOrder, obj.id)
+	}
+	deviceSet := map[uint32]bool{}
+	for _, obj := range devices {
+		deviceSet[obj.id] = true
+	}
+
+	type deviceMapKey struct {
+		deviceID uint32
+		mapID    uint32
+	}
+	deviceNode := map[deviceMapKey]uint32{}
+	firstDeviceNode := map[uint32]uint32{}
+	nodeByID := map[uint32]novaNode{}
+	submapByNode := map[uint32]uint32{}
+	linkLabels := map[uint32][2]uint32{}
 	for _, obj := range nodes {
 		mapID, okMap := obj.msg.u32(0x5dc0)
-		deviceID, okDevice := obj.msg.u32(0x5dc4)
-		if !okMap || !okDevice || mapID == 0xffffffff || deviceID == 0xffffffff {
+		if !okMap || mapID == 0xffffffff || !mapSet[mapID] {
 			continue
+		}
+		deviceID, okDevice := obj.msg.u32(0x5dc4)
+		if !okDevice {
+			deviceID = 0xffffffff
 		}
 		x, _ := obj.msg.u32(0x5dc5)
 		y, _ := obj.msg.u32(0x5dc6)
-		node := novaNode{mapID: mapID, deviceID: deviceID, x: float64(x), y: float64(y)}
-		nodesByID[obj.id] = node
-		if _, exists := deviceNode[deviceID]; !exists {
-			deviceNode[deviceID] = node
+		nodeByID[obj.id] = novaNode{mapID: mapID, deviceID: deviceID, x: float64(x), y: float64(y)}
+		switch {
+		case deviceSet[deviceID]:
+			key := deviceMapKey{deviceID: deviceID, mapID: mapID}
+			if _, exists := deviceNode[key]; !exists {
+				deviceNode[key] = obj.id
+			}
+			if _, exists := firstDeviceNode[deviceID]; !exists {
+				firstDeviceNode[deviceID] = obj.id
+			}
+		case mapSet[deviceID] && deviceID != mapID:
+			submapByNode[obj.id] = deviceID
+		default:
+			// Link labels carry the two real endpoint nodes plus the link ID.
+			if linkID, ok := obj.msg.u32(0x5ddd); ok && linkID != 0xffffffff {
+				aNode, okA := obj.msg.u32(0x5ddb)
+				bNode, okB := obj.msg.u32(0x5ddc)
+				if okA && okB && aNode != 0xffffffff && bNode != 0xffffffff {
+					linkLabels[obj.id] = [2]uint32{aNode, bNode}
+				}
+			}
 		}
 	}
 
@@ -454,7 +492,9 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 			DeviceType: normalizeType(deviceType),
 			Notes:      strings.Join(notes, " · "),
 		}
-		if node, ok := deviceNode[obj.id]; ok {
+		if nodeID, ok := firstDeviceNode[obj.id]; ok {
+			node := nodeByID[nodeID]
+			device.NodeID = novaID(nodeID)
 			device.SourceMapID = novaID(node.mapID)
 			device.MapName = mapName(p.Maps, device.SourceMapID)
 			device.PosX, device.PosY = node.x, node.y
@@ -465,30 +505,132 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		p.Devices = append(p.Devices, device)
 	}
 
-	deviceSet := map[uint32]bool{}
-	for _, obj := range devices {
-		deviceSet[obj.id] = true
-	}
-	decorationPositions := map[string]int{}
-	for _, obj := range nodes {
-		mapID, okMap := obj.msg.u32(0x5dc0)
-		if !okMap || mapID == 0xffffffff {
+	// Build the map hierarchy from the submap nodes. The Dude usually adds a
+	// node back to the parent map inside every child map, so a plain "referenced
+	// map is a child" rule creates cycles. Pick the map with no incoming
+	// references as the root; if every map is referenced, prefer the map that
+	// contains the most distinct submaps.
+	adjacency := map[uint32]map[uint32]bool{}
+	for nodeID, target := range submapByNode {
+		source := nodeByID[nodeID].mapID
+		if source == target {
 			continue
 		}
-		deviceID, _ := obj.msg.u32(0x5dc4)
-		if deviceID != 0xffffffff && deviceSet[deviceID] {
+		if adjacency[source] == nil {
+			adjacency[source] = map[uint32]bool{}
+		}
+		adjacency[source][target] = true
+	}
+	incoming := map[uint32]bool{}
+	for _, targets := range adjacency {
+		for target := range targets {
+			incoming[target] = true
+		}
+	}
+	childrenOf := func(mapID uint32) []uint32 {
+		set := adjacency[mapID]
+		if len(set) == 0 {
+			return nil
+		}
+		out := make([]uint32, 0, len(set))
+		for _, candidate := range mapOrder {
+			if set[candidate] {
+				out = append(out, candidate)
+			}
+		}
+		return out
+	}
+	parentOf := map[uint32]uint32{}
+	visitedMaps := map[uint32]bool{}
+	assignTree := func(root uint32) {
+		if visitedMaps[root] {
+			return
+		}
+		visitedMaps[root] = true
+		queue := []uint32{root}
+		for len(queue) > 0 {
+			current := queue[0]
+			queue = queue[1:]
+			for _, child := range childrenOf(current) {
+				if visitedMaps[child] {
+					continue
+				}
+				visitedMaps[child] = true
+				parentOf[child] = current
+				queue = append(queue, child)
+			}
+		}
+	}
+	var roots []uint32
+	for _, id := range mapOrder {
+		if !incoming[id] {
+			roots = append(roots, id)
+		}
+	}
+	if len(roots) == 0 && len(mapOrder) > 0 {
+		best, bestDegree := mapOrder[0], -1
+		for _, id := range mapOrder {
+			if degree := len(adjacency[id]); degree > bestDegree {
+				best, bestDegree = id, degree
+			}
+		}
+		roots = append(roots, best)
+	}
+	for _, root := range roots {
+		assignTree(root)
+	}
+	for _, id := range mapOrder {
+		assignTree(id)
+	}
+	for i := range p.Maps {
+		raw := strings.TrimPrefix(p.Maps[i].SourceID, "dude-")
+		id64, _ := strconv.ParseUint(raw, 10, 32)
+		if parent, ok := parentOf[uint32(id64)]; ok {
+			p.Maps[i].ParentSourceID = novaID(parent)
+		}
+	}
+
+	for _, obj := range nodes {
+		target, ok := submapByNode[obj.id]
+		if !ok {
+			continue
+		}
+		node := nodeByID[obj.id]
+		name := mapName(p.Maps, novaID(target))
+		if name == "" {
+			name = obj.msg.str(0x0010)
+		}
+		name = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(name, "\r\n", "\n"), "\r", "\n"))
+		if name == "" {
+			name = "Submapa Dude"
+		}
+		if len(name) > 240 {
+			name = name[:240]
+		}
+		p.Submaps = append(p.Submaps, Submap{
+			SourceID: novaID(obj.id), MapID: novaID(node.mapID), TargetSourceID: novaID(target),
+			Name: name, PosX: node.x, PosY: node.y, Width: 190, Height: 110,
+		})
+	}
+
+	decorationPositions := map[string]int{}
+	for _, obj := range nodes {
+		node, ok := nodeByID[obj.id]
+		if !ok {
+			continue
+		}
+		if deviceSet[node.deviceID] {
 			continue // placement of a real device
 		}
-		x, _ := obj.msg.u32(0x5dc5)
-		y, _ := obj.msg.u32(0x5dc6)
+		if _, ok := submapByNode[obj.id]; ok {
+			continue // handled as a submap element
+		}
+		if _, ok := linkLabels[obj.id]; ok {
+			continue // the link is drawn by NetMonitor; no text label needed
+		}
 		name := obj.msg.str(0x0010)
-		if deviceID != 0xffffffff {
-			// A node that points at a map is a submap link; use the map name.
-			if submapName := mapName(p.Maps, novaID(deviceID)); submapName != "" {
-				name = submapName
-			}
-		} else if _, isLinkLabel := obj.msg.field(0x5ddd); isLinkLabel {
-			name = "Enlace"
+		if name == "" && node.deviceID != 0xffffffff {
+			name = mapName(p.Maps, novaID(node.deviceID))
 		}
 		name = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(name, "\r\n", "\n"), "\r", "\n"))
 		if name == "" {
@@ -499,39 +641,65 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		}
 		// Dude can place several annotations at the exact same point. Offset
 		// duplicates slightly so they remain readable in NetMonitor.
-		posKey := fmt.Sprintf("%d:%.0f:%.0f", mapID, float64(x), float64(y))
+		posKey := fmt.Sprintf("%d:%.0f:%.0f", node.mapID, node.x, node.y)
 		offset := float64(decorationPositions[posKey] * 22)
 		decorationPositions[posKey]++
 		p.Decorations = append(p.Decorations, Decoration{
-			SourceID: novaID(obj.id), MapID: novaID(mapID), Name: name,
-			PosX: float64(x), PosY: float64(y) + offset, Width: 180, Height: 60,
+			SourceID: novaID(obj.id), MapID: novaID(node.mapID), Name: name,
+			PosX: node.x, PosY: node.y + offset, Width: 180, Height: 60,
 		})
 	}
 
 	for _, obj := range links {
-		deviceA, okA := obj.msg.u32(0x55f1)
+		aSide, okA := obj.msg.u32(0x55f1)
 		bSide, okB := obj.msg.u32(0x55f5)
-		if !okA || !okB || deviceA == 0xffffffff || bSide == 0xffffffff {
+		if !okA || !okB || aSide == 0xffffffff || bSide == 0xffffffff {
 			continue
 		}
-		deviceB := bSide
-		if node, ok := nodesByID[bSide]; ok && deviceSet[node.deviceID] {
-			deviceB = node.deviceID
-		}
 		mapID, _ := obj.msg.u32(0x55f4)
-		sourceMapID := novaID(mapID)
-		if sourceMapID == "" {
-			if node, ok := deviceNode[deviceA]; ok {
-				sourceMapID = novaID(node.mapID)
+		var aNode, bNode uint32
+		if label, ok := linkLabels[bSide]; ok {
+			aNode, bNode = label[0], label[1]
+		} else if bInfo, ok := nodeByID[bSide]; ok {
+			bNode = bSide
+			if _, ok := nodeByID[aSide]; ok {
+				aNode = aSide
+			} else {
+				aNode = deviceNode[deviceMapKey{deviceID: aSide, mapID: bInfo.mapID}]
+				if aNode == 0 {
+					aNode = firstDeviceNode[aSide]
+				}
 			}
+		} else {
+			continue
+		}
+		aInfo, aFound := nodeByID[aNode]
+		bInfo, bFound := nodeByID[bNode]
+		if !aFound || !bFound {
+			continue
+		}
+		if mapID == 0xffffffff || !mapSet[mapID] || aInfo.mapID != bInfo.mapID {
+			mapID = aInfo.mapID
+		}
+		deviceA, deviceB := "", ""
+		if deviceSet[aInfo.deviceID] {
+			deviceA = novaID(aInfo.deviceID)
+		}
+		if deviceSet[bInfo.deviceID] {
+			deviceB = novaID(bInfo.deviceID)
+		}
+		if deviceA == "" && deviceB == "" {
+			continue
 		}
 		linkTypeID, _ := obj.msg.u32(0x55f6)
 		speed, _ := obj.msg.u64(0x55f3)
 		link := Link{
 			SourceID:    novaID(obj.id),
-			SourceMapID: sourceMapID,
-			DeviceA:     novaID(deviceA),
-			DeviceB:     novaID(deviceB),
+			SourceMapID: novaID(mapID),
+			NodeA:       novaID(aNode),
+			NodeB:       novaID(bNode),
+			DeviceA:     deviceA,
+			DeviceB:     deviceB,
 			LinkType:    normalizeLinkType(linkTypes[linkTypeID]),
 			SpeedBps:    int64(speed),
 		}
@@ -583,21 +751,27 @@ func finalizePreview(p *Preview) {
 		return strings.ToLower(p.Devices[i].Name) < strings.ToLower(p.Devices[j].Name)
 	})
 	if len(p.Links) > 0 {
-		known := map[string]bool{}
+		knownDevices := map[string]bool{}
 		for _, device := range p.Devices {
-			known[device.SourceID] = true
+			knownDevices[device.SourceID] = true
 		}
+		knownElements := map[string]bool{}
 		for _, decoration := range p.Decorations {
-			known[decoration.SourceID] = true
+			knownElements[decoration.SourceID] = true
+		}
+		for _, submap := range p.Submaps {
+			knownElements[submap.SourceID] = true
 		}
 		orphanLinks := 0
 		for _, link := range p.Links {
-			if !known[link.DeviceA] || !known[link.DeviceB] {
+			aOK := knownDevices[link.DeviceA] || knownElements[link.NodeA] || knownElements[link.DeviceA]
+			bOK := knownDevices[link.DeviceB] || knownElements[link.NodeB] || knownElements[link.DeviceB]
+			if !aOK || !bOK {
 				orphanLinks++
 			}
 		}
 		if orphanLinks > 0 {
-			p.Warnings = append(p.Warnings, fmt.Sprintf("%d enlaces no se podrán crear porque uno de sus extremos no es un dispositivo ni un elemento decorativo importable.", orphanLinks))
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%d enlaces no se podrán crear porque uno de sus extremos no es un dispositivo ni un elemento importable.", orphanLinks))
 		}
 	}
 }

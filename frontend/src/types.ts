@@ -662,6 +662,7 @@ export interface DudeMap {
 
 export interface DudeDevice {
   source_id: string
+  node_id: string
   name: string
   address: string
   dns_name: string
@@ -682,10 +683,23 @@ export interface DudeDevice {
 export interface DudeLink {
   source_id: string
   source_map_id: string
+  node_a: string
+  node_b: string
   device_a: string
   device_b: string
   link_type: string
   max_speed_bps: number
+}
+
+export interface DudeSubmap {
+  source_id: string
+  map_id: string
+  target_source_id: string
+  name: string
+  pos_x: number
+  pos_y: number
+  width: number
+  height: number
 }
 
 export interface DudeDecoration {
@@ -703,6 +717,7 @@ export interface DudePreview {
   filename: string
   maps: DudeMap[]
   devices: DudeDevice[]
+  submaps: DudeSubmap[]
   decorations: DudeDecoration[]
   links: DudeLink[]
   warnings: string[]
