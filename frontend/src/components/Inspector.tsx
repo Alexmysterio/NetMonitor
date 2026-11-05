@@ -31,6 +31,7 @@ import { Button, deviceTypeLabel, EmptyState, Field, formatBps, formatDuration, 
 import SnmpInfoModal from './SnmpInfoModal'
 import SnmpInfoSections from './SnmpInfoSections'
 import NodeIcon from './NodeIcon'
+import DeviceAccessPanel from './DeviceAccessPanel'
 import ToolsModal from './ToolsModal'
 import { confirmAction } from '../confirm'
 
@@ -192,7 +193,7 @@ function ElementInspector({
   refreshKey: number
 }) {
   const [device, setDevice] = useState<Device | null>(null)
-  const [tab, setTab] = useState<'general' | 'services' | 'snmp' | 'label'>('general')
+  const [tab, setTab] = useState<'general' | 'services' | 'access' | 'snmp' | 'label'>('general')
   const [shape, setShape] = useState<Shape>(element.shape)
   const [label, setLabel] = useState(element.label_template)
   const [zoneID, setZoneID] = useState(element.zone_id || '')
@@ -486,6 +487,7 @@ function ElementInspector({
           <div className="inspector-tabs">
             <button className={tab === 'general' ? 'active' : ''} onClick={() => setTab('general')}>General</button>
             <button className={tab === 'services' ? 'active' : ''} onClick={() => setTab('services')}>Sondas {device?.services.length ? <span>{device.services.length}</span> : null}</button>
+            <button className={tab === 'access' ? 'active' : ''} onClick={() => setTab('access')}>Accesos</button>
             {device?.snmp_profile_id && <button className={tab === 'snmp' ? 'active' : ''} onClick={() => setTab('snmp')}>SNMP</button>}
             <button className={tab === 'label' ? 'active' : ''} onClick={() => setTab('label')}>Apariencia</button>
           </div>
@@ -521,7 +523,7 @@ function ElementInspector({
                 <button onClick={ackDevice} className={element.device?.is_acknowledged ? 'active' : ''}><Check size={14} /> {element.device?.is_acknowledged ? 'Ack activo' : 'Reconocer'}</button>
                 <button onClick={() => apiSend(`/devices/${element.device_id}/poll-now`, 'POST').then(onRefresh)}><RefreshCcw size={14} /> Sondear</button>
                 <button onClick={async () => { const r = await apiSend<any>('/tools/ping', 'POST', { host: element.device?.primary_ip, count: 4 }); alert(`${r.host}\n${r.received}/${r.sent} respuestas · ${r.avg_ms?.toFixed?.(1) ?? r.avg_ms} ms`) }}><Activity size={14} /> Ping</button>
-                <button onClick={() => setToolsOpen(true)}><Wrench size={14} /> Herramientas</button>
+                <button onClick={() => setToolsOpen(true)}><Wrench size={14} /> Diagnóstico</button>
                 <button onClick={() => setSnmpOpen(true)} disabled={!device?.snmp_profile_id} title={device?.snmp_profile_id ? 'Inventario SNMP en vivo' : 'Sin perfil SNMP'}><Database size={14} /> Analizar SNMP</button>
                 <button onClick={() => setWalkOpen(true)} disabled={!device?.snmp_profile_id} title={device?.snmp_profile_id ? 'Explorar OIDs' : 'Sin perfil SNMP'}><Radar size={14} /> SNMP Walk</button>
                 <button onClick={setMaintenance}><Clock3 size={14} /> Mantenimiento</button>
@@ -552,6 +554,16 @@ function ElementInspector({
               <div className="inspector-danger">
                 <Button variant="danger" size="sm" onClick={removeElement}><Trash2 size={14} /> Quitar del mapa</Button>
               </div>
+            </div>
+          )}
+
+          {tab === 'access' && (
+            <div className="inspector-body">
+              <DeviceAccessPanel
+                deviceId={element.device_id}
+                deviceName={device?.name || element.device?.name}
+                host={device?.primary_ip || element.device?.primary_ip}
+              />
             </div>
           )}
 
@@ -676,7 +688,6 @@ function ElementInspector({
         onClose={() => setToolsOpen(false)}
         host={device?.primary_ip || element.device?.primary_ip || ''}
         name={device?.name || element.device?.name}
-        deviceId={element.device_id}
       />
 
       <Modal open={walkOpen} onClose={() => setWalkOpen(false)} title="SNMP Walk" subtitle="Explora el árbol OID del equipo en vivo." width={720}>

@@ -506,6 +506,20 @@ export interface NOCSettings {
 
 // --- Fase 3 - Gestion y diferenciacion -------------------------------
 
+export type DeviceCredentialKind = 'winbox' | 'web' | 'ssh' | 'api' | 'other'
+
+export interface DeviceToolAccess {
+  kind: DeviceCredentialKind
+  source: 'device' | 'routeros' | 'none'
+  username: string
+  port: number
+  use_tls: boolean
+  insecure_tls: boolean
+  path: string
+  notes: string
+  has_password: boolean
+}
+
 export interface RouterOSCredential {
   id: string
   name: string

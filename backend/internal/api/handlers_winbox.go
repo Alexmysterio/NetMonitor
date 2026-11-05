@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -14,7 +15,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/netmonitor/netmonitor/internal/auth"
-	"github.com/netmonitor/netmonitor/internal/secure"
 )
 
 const winboxTicketTTL = 90 * time.Second
@@ -37,26 +37,17 @@ func (s *Server) createWinboxTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var name, address, credentialID string
-	err := s.pool.QueryRow(r.Context(), `
-		SELECT d.name, COALESCE(host(d.primary_ip),''), COALESCE(d.routeros_credential_id::text,'')
-		FROM devices d WHERE d.id=$1
-	`, req.DeviceID).Scan(&name, &address, &credentialID)
+	credential, err := s.resolveToolCredential(r.Context(), req.DeviceID, "winbox")
+	if errors.Is(err, errNoToolCredential) {
+		writeError(w, http.StatusBadRequest, "el dispositivo no tiene credencial Winbox ni credencial RouterOS")
+		return
+	}
 	if err != nil {
-		writeError(w, http.StatusNotFound, "dispositivo no encontrado")
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if address == "" {
-		writeError(w, http.StatusBadRequest, "el dispositivo no tiene una IP principal")
-		return
-	}
-	if credentialID == "" {
-		writeError(w, http.StatusBadRequest, "el dispositivo no tiene una credencial RouterOS asignada")
-		return
-	}
-	var username string
-	if err := s.pool.QueryRow(r.Context(), `SELECT username FROM routeros_credentials WHERE id=$1`, credentialID).Scan(&username); err != nil || strings.TrimSpace(username) == "" {
-		writeError(w, http.StatusBadRequest, "la credencial RouterOS no tiene usuario")
+	if strings.TrimSpace(credential.Username) == "" {
+		writeError(w, http.StatusBadRequest, "la credencial Winbox no tiene usuario")
 		return
 	}
 	if s.store == nil || s.store.RDB == nil {
@@ -80,7 +71,7 @@ func (s *Server) createWinboxTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"url":         "netmonitor-winbox://" + token,
 		"expires_in":  int(winboxTicketTTL.Seconds()),
-		"device_name": name,
+		"device_name": credential.DeviceName,
 	}})
 }
 
@@ -116,14 +107,9 @@ func (s *Server) redeemWinboxTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, err := s.loadRouterOSTarget(r.Context(), deviceID)
-	if err != nil || strings.TrimSpace(target.Username) == "" || target.IP == "" {
-		writeError(w, http.StatusBadRequest, "la credencial RouterOS ya no está disponible")
-		return
-	}
-	password, err := secure.Decrypt(target.PasswordEnc)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "no se pudo descifrar la credencial RouterOS")
+	credential, err := s.resolveToolCredential(r.Context(), deviceID, "winbox")
+	if err != nil || strings.TrimSpace(credential.Username) == "" || credential.Address == "" {
+		writeError(w, http.StatusBadRequest, "la credencial Winbox ya no está disponible")
 		return
 	}
 
@@ -134,10 +120,11 @@ func (s *Server) redeemWinboxTicket(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
-		"address":     target.IP,
-		"username":    target.Username,
-		"password":    password,
-		"device_name": target.Name,
+		"address":     credential.Address,
+		"port":        credential.Port,
+		"username":    credential.Username,
+		"password":    credential.Password,
+		"device_name": credential.DeviceName,
 	}})
 }
 
@@ -249,7 +236,9 @@ try {
   $winbox = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
   if (-not $winbox) { throw 'No se encontro Winbox.exe. Instala Winbox o anade su carpeta al PATH.' }
 
-  $winboxArgs = (Quote-WinboxArg $response.address) + ' ' + (Quote-WinboxArg $response.username) + ' ' + (Quote-WinboxArg $response.password)
+  $address = [string]$response.address
+  if ($response.port -and [int]$response.port -ne 8291) { $address = $address + ':' + [string]$response.port }
+  $winboxArgs = (Quote-WinboxArg $address) + ' ' + (Quote-WinboxArg $response.username) + ' ' + (Quote-WinboxArg $response.password)
   Start-Process -FilePath $winbox -ArgumentList $winboxArgs
 } catch {
   Show-WinboxError $_.Exception.Message

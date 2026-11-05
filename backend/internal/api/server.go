@@ -141,6 +141,10 @@ func (s *Server) Router() http.Handler {
 		r.Post("/devices/{id}/services", s.addService)
 		r.Post("/devices/{id}/ensure-probe", s.ensureDeviceProbe)
 		r.Delete("/devices/{id}/services/{serviceID}", s.deleteService)
+		r.Get("/devices/{id}/credentials", s.listDeviceCredentials)
+		r.Put("/devices/{id}/credentials/{kind}", s.upsertDeviceCredential)
+		r.Delete("/devices/{id}/credentials/{kind}", s.deleteDeviceCredential)
+		r.Post("/devices/{id}/credentials/{kind}/reveal", s.revealDeviceCredential)
 
 		r.Get("/device-types", s.listDeviceTypes)
 		r.Post("/device-types", s.createDeviceType)

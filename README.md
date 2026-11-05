@@ -20,7 +20,7 @@ NetMonitor es una alternativa web a los clásicos paneles de monitorización de 
 - **SNMP Traps y Syslog**: recepción, decodificación con MIBs, reglas y feed de eventos.
 - **Correlación de causa raíz**: supresión de alertas derivadas de una caída padre o de un fallo de topología L2.
 - **RouterOS**: inventario, plantillas, despliegues con aprobación obligatoria, dry-run y snapshots antes/después.
-- **Winbox integrado**: abre Winbox desde Herramientas con la credencial RouterOS guardada. Usa un ticket de un solo uso y un pequeño puente local para que la contraseña no viaje en la URL.
+- **Accesos por equipo**: credenciales cifradas por servicio (Winbox, Web/HTTP y SSH), con respaldo de la credencial RouterOS. Abre Winbox con el puente local, lanza SSH/Web y permite copiar usuario o contraseña como fuente de verdad.
 - **Informes**: PDF/CSV, SLA por cliente, disponibilidad por interfaz, comparativa mensual, programación y exportación local/S3.
 - **Importación de The Dude**: mapas, submapas, dispositivos, enlaces y elementos decorativos desde SQLite/XML, incluidas las bases modernas con objetos Nova en la tabla `objs`. Los mapas generales que solo contienen submapas reconstruyen la jerarquía padre/hijo, y los enlaces de The Dude se recrean como enlaces reales entre equipos y submapas (no como etiquetas de texto). Antes de aplicar se pueden asignar perfiles SNMP, sondas y tipo de dispositivo por equipo o a todos.
 - **Seguridad**: RBAC por mapa/grupo/dispositivo, API keys, auditoría, cifrado AES-256-GCM de secretos, JWT revocable y sesiones con refresco de permisos.
@@ -426,9 +426,19 @@ npm run build
 
 La especificación OpenAPI está disponible en `/api/v1/openapi.json` con el stack arrancado.
 
-## Winbox con credenciales
+## Accesos y credenciales
 
-En **Herramientas → Winbox** puedes abrir Winbox con el usuario y la contraseña RouterOS del equipo. El navegador solo recibe un ticket de un solo uso (90 segundos); el puente local canjea el ticket contra NetMonitor y ejecuta `winbox.exe` con las credenciales.
+Cada equipo tiene una sección **Accesos** con credenciales independientes para **Winbox**, **Web/HTTP** y **SSH**. Si un servicio no tiene credencial propia, se reutiliza la credencial RouterOS asignada al equipo. Las contraseñas se cifran en reposo y no se devuelven en los listados.
+
+- **Winbox**: abre Winbox con el usuario y la contraseña guardados.
+- **SSH**: abre el cliente SSH del sistema con el usuario y puerto guardados; la contraseña se copia con el botón explícito.
+- **Web**: abre HTTP/HTTPS y copia la contraseña al portapapeles. Los navegadores no permiten rellenar automáticamente formularios como WebFig por seguridad; para autollenado real haría falta una extensión o un userscript.
+- **Copiar usuario/contraseña**: botones explícitos para usar la credencial en cualquier cliente.
+- La **API RouterOS** sigue usando la credencial RouterOS de la sección RouterOS.
+
+### Winbox con credenciales
+
+En **Accesos → Winbox** puedes abrir Winbox con el usuario y la contraseña del equipo. El navegador solo recibe un ticket de un solo uso (90 segundos); el puente local canjea el ticket contra NetMonitor y ejecuta `winbox.exe` con las credenciales.
 
 1. En el equipo Windows donde tengas instalado Winbox, pulsa **Descargar puente** y ejecuta el `.cmd` una vez. Se registra en `HKCU` (no requiere administrador).
 2. Vuelve a NetMonitor y pulsa **Abrir Winbox**.

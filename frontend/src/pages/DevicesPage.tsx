@@ -5,6 +5,7 @@ import { apiGet, apiSend } from '../api'
 import { confirmAction } from '../confirm'
 import type { Agent, Device, DeviceService, SnmpProfile } from '../types'
 import { Button, deviceTypeLabel, EmptyState, Field, formatDuration, IconButton, KeyValue, Modal, Spinner, StatusBadge, StatusDot, timeAgo, timeHM } from '../ui'
+import DeviceAccessPanel from '../components/DeviceAccessPanel'
 import SnmpInfoModal from '../components/SnmpInfoModal'
 import ToolsModal from '../components/ToolsModal'
 
@@ -406,7 +407,7 @@ export default function DevicesPage() {
               <div className="device-detail-actions">
                 <Button variant="secondary" size="sm" onClick={() => ack(detail)}><Check size={14} /> {detail.is_acknowledged ? 'Quitar ack' : 'Reconocer'}</Button>
                 <Button variant="secondary" size="sm" onClick={() => poll(detail.id)}><RefreshCcw size={14} /> Sondear</Button>
-                <Button variant="secondary" size="sm" onClick={() => setToolsOpen(true)}><Wrench size={14} /> Herramientas</Button>
+                <Button variant="secondary" size="sm" onClick={() => setToolsOpen(true)}><Wrench size={14} /> Diagnóstico</Button>
                 <Button variant="secondary" size="sm" disabled={!detail.snmp_profile_id} onClick={() => setSnmpOpen(true)} title={detail.snmp_profile_id ? 'Inventario SNMP' : 'Sin perfil SNMP'}><Database size={14} /> SNMP</Button>
                 <Button variant="secondary" size="sm" onClick={() => openEdit(detail)}><Pencil size={14} /> Editar</Button>
                 <Button variant="danger" size="sm" onClick={() => void removeDevice(detail)} disabled={saving}><Trash2 size={14} /> Eliminar</Button>
@@ -422,6 +423,8 @@ export default function DevicesPage() {
               <KeyValue k="Etiquetas" v={detail.tags?.length ? detail.tags.map(t => <span key={t} className="mini-tag">{t}</span>) : '—'} />
             </div>
             {detail.notes && <div className="notes-box">{detail.notes}</div>}
+            <div className="section-label">Accesos y herramientas</div>
+            <DeviceAccessPanel deviceId={detail.id} deviceName={detail.name} host={detail.primary_ip} />
             <div className="section-label">Sondas</div>
             <div className="service-list compact">
               {detail.services.map((s: DeviceService) => (
@@ -455,7 +458,6 @@ export default function DevicesPage() {
         onClose={() => setToolsOpen(false)}
         host={detail?.primary_ip || selected?.primary_ip || ''}
         name={detail?.name || selected?.name}
-        deviceId={detail?.id || selected?.id}
       />
 
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Editar dispositivo" subtitle={detail?.primary_ip} width={700} footer={<><Button variant="ghost" onClick={() => setEditOpen(false)}>Cancelar</Button><Button variant="primary" onClick={saveEdit} disabled={saving}>{saving ? 'Guardando…' : 'Guardar cambios'}</Button></>}>
