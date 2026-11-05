@@ -893,6 +893,12 @@ body.noc-mode .canvas-legend { bottom: 76px; }
 .tool-links { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
 .tool-link { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: #2563eb; background: #f8faff; border: 1px solid #dbeafe; border-radius: 7px; padding: 5px 8px; text-decoration: none; }
 .tool-link:hover { background: #eef4ff; }
+.tool-winbox { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px; margin: 0 0 12px; border: 1px solid #dbeafe; background: #f8faff; border-radius: 10px; }
+.tool-winbox-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tool-winbox-main > div { display: flex; flex-direction: column; gap: 2px; }
+.tool-winbox-main b { font-size: 12px; color: #1e3a8a; }
+.tool-winbox-main span, .tool-winbox-foot span { font-size: 10px; color: #64748b; }
+.tool-winbox-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 7px; border-top: 1px solid #dbeafe; }
 .tool-result { margin-top: 12px; border-top: 1px solid #eef2f7; padding-top: 10px; }
 .tool-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 .tool-metrics div { background: #f8fafc; border: 1px solid #eef2f7; border-radius: 9px; padding: 8px; text-align: center; }

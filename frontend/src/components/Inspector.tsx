@@ -676,6 +676,7 @@ function ElementInspector({
         onClose={() => setToolsOpen(false)}
         host={device?.primary_ip || element.device?.primary_ip || ''}
         name={device?.name || element.device?.name}
+        deviceId={element.device_id}
       />
 
       <Modal open={walkOpen} onClose={() => setWalkOpen(false)} title="SNMP Walk" subtitle="Explora el árbol OID del equipo en vivo." width={720}>

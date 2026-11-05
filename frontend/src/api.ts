@@ -72,3 +72,32 @@ export const apiSend = <T>(path: string, method: string, body?: unknown) =>
 
 export const apiUpload = <T>(path: string, form: FormData) =>
   api<{ success: boolean; data: T }>(path, { method: 'POST', body: form }).then(r => r.data)
+
+export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const res = await fetch(`/api/v1${path}`, { headers })
+  if (!res.ok) {
+    const text = await res.text()
+    let message = `Error HTTP ${res.status}`
+    try {
+      message = JSON.parse(text)?.error || message
+    } catch {
+      /* keep generic message */
+    }
+    throw new ApiError(res.status, message)
+  }
+  const blob = await res.blob()
+  const disposition = res.headers.get('Content-Disposition') || ''
+  const match = /filename="?([^";]+)"?/i.exec(disposition)
+  const filename = match?.[1] || fallbackName
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 5000)
+}

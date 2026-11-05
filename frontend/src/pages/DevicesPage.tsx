@@ -455,6 +455,7 @@ export default function DevicesPage() {
         onClose={() => setToolsOpen(false)}
         host={detail?.primary_ip || selected?.primary_ip || ''}
         name={detail?.name || selected?.name}
+        deviceId={detail?.id || selected?.id}
       />
 
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Editar dispositivo" subtitle={detail?.primary_ip} width={700} footer={<><Button variant="ghost" onClick={() => setEditOpen(false)}>Cancelar</Button><Button variant="primary" onClick={saveEdit} disabled={saving}>{saving ? 'Guardando…' : 'Guardar cambios'}</Button></>}>

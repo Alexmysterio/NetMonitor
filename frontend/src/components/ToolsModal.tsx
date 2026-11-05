@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Activity,
+  Download,
   ExternalLink,
   Globe,
   Network,
@@ -9,7 +10,7 @@ import {
   Server,
   Terminal,
 } from 'lucide-react'
-import { apiSend } from '../api'
+import { apiDownload, apiSend } from '../api'
 import { Button, Field, Modal, Spinner } from '../ui'
 
 type ToolTab = 'ping' | 'traceroute' | 'dns' | 'tcp' | 'http'
@@ -27,11 +28,13 @@ export default function ToolsModal({
   onClose,
   host,
   name,
+  deviceId,
 }: {
   open: boolean
   onClose: () => void
   host?: string
   name?: string
+  deviceId?: string
 }) {
   const [tab, setTab] = useState<ToolTab>('ping')
   const [target, setTarget] = useState(host || '')
@@ -40,6 +43,10 @@ export default function ToolsModal({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<any>(null)
+  const [winboxBusy, setWinboxBusy] = useState(false)
+  const [winboxError, setWinboxError] = useState('')
+  const [winboxHint, setWinboxHint] = useState(false)
+  const [winboxUrl, setWinboxUrl] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -47,6 +54,9 @@ export default function ToolsModal({
     setUrl(host ? `http://${host}` : '')
     setResult(null)
     setError('')
+    setWinboxError('')
+    setWinboxHint(false)
+    setWinboxUrl('')
   }, [open, host])
 
   const run = async () => {
@@ -66,11 +76,38 @@ export default function ToolsModal({
     }
   }
 
+  const openWinbox = async () => {
+    if (!deviceId) return
+    setWinboxBusy(true)
+    setWinboxError('')
+    setWinboxHint(false)
+    setWinboxUrl('')
+    try {
+      const data = await apiSend<{ url: string; expires_in: number }>('/tools/winbox/ticket', 'POST', { device_id: deviceId })
+      setWinboxUrl(data.url)
+      window.location.href = data.url
+      setWinboxHint(true)
+    } catch (e) {
+      setWinboxError((e as Error).message)
+    } finally {
+      setWinboxBusy(false)
+    }
+  }
+
+  const downloadBridge = async () => {
+    setWinboxError('')
+    try {
+      await apiDownload('/tools/winbox/bridge', 'netmonitor-winbox-bridge.cmd')
+    } catch (e) {
+      setWinboxError((e as Error).message)
+    }
+  }
+
   const deepLinks = host ? [
     { label: 'SSH', href: `ssh://${host}`, icon: <Terminal size={14} /> },
     { label: 'Web HTTP', href: `http://${host}`, icon: <Globe size={14} /> },
     { label: 'Web HTTPS', href: `https://${host}`, icon: <Globe size={14} /> },
-    { label: 'Winbox', href: `winbox://${host}`, icon: <ExternalLink size={14} /> },
+    { label: 'Winbox sin credenciales', href: `winbox://${host}`, icon: <ExternalLink size={14} /> },
   ] : []
 
   return (
@@ -104,6 +141,30 @@ export default function ToolsModal({
           {deepLinks.map(l => (
             <a key={l.label} className="tool-link" href={l.href} target="_blank" rel="noreferrer">{l.icon} {l.label}</a>
           ))}
+        </div>
+      )}
+
+      {deviceId && (
+        <div className="tool-winbox">
+          <div className="tool-winbox-main">
+            <div>
+              <b>Winbox con credenciales</b>
+              <span>Abre Winbox con el usuario y la contraseña RouterOS guardados en NetMonitor.</span>
+            </div>
+            <Button size="sm" variant="primary" onClick={() => void openWinbox()} disabled={winboxBusy}>
+              {winboxBusy ? <Spinner /> : <ExternalLink size={14} />} {winboxBusy ? 'Preparando…' : 'Abrir Winbox'}
+            </Button>
+          </div>
+          <div className="tool-winbox-foot">
+            <span>¿No se abre? Instala una vez el puente Winbox en este equipo Windows.</span>
+            <Button size="sm" variant="secondary" onClick={() => void downloadBridge()}><Download size={14} /> Descargar puente</Button>
+          </div>
+          {winboxHint && (
+            <span className="muted small">
+              Si el navegador no abrió Winbox, instala el puente y usa <a className="tool-link" href={winboxUrl}>abrir Winbox ahora</a>.
+            </span>
+          )}
+          {winboxError && <div className="form-error">{winboxError}</div>}
         </div>
       )}
 

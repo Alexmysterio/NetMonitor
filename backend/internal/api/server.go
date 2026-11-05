@@ -63,6 +63,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/v1/agent/ws", s.handleAgentWS)
 	}
 	r.Post("/api/v1/telegram/webhook/{id}", s.telegramWebhook)
+	r.Post("/api/v1/tools/winbox/redeem", s.redeemWinboxTicket)
 	r.Get("/ws", s.handleWS)
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -288,6 +289,8 @@ func (s *Server) Router() http.Handler {
 
 		r.Post("/tools/snmp-walk", s.snmpWalk)
 		r.Post("/tools/evaluate-dsl", s.evaluateDSL)
+		r.Post("/tools/winbox/ticket", s.createWinboxTicket)
+		r.Get("/tools/winbox/bridge", s.downloadWinboxBridge)
 		r.Post("/tools/ping", s.pingTool)
 		r.Post("/tools/dns", s.dnsTool)
 		r.Post("/tools/tcp", s.tcpTool)
