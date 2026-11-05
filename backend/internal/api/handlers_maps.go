@@ -50,7 +50,7 @@ func statusText(s string) string {
 }
 
 func worstStatus(statuses []string) string {
-	rank := map[string]int{"down": 6, "unreachable": 5, "warning": 4, "unknown": 3, "disabled": 2, "up": 1}
+	rank := map[string]int{"down": 7, "unreachable": 6, "acknowledged": 5, "warning": 4, "unknown": 3, "disabled": 2, "up": 1}
 	best := "unknown"
 	for _, s := range statuses {
 		if rank[s] > rank[best] {
@@ -61,12 +61,13 @@ func worstStatus(statuses []string) string {
 }
 
 type mapCounts struct {
-	Up          int `json:"up"`
-	Warning     int `json:"warning"`
-	Down        int `json:"down"`
-	Unreachable int `json:"unreachable"`
-	Disabled    int `json:"disabled"`
-	Unknown     int `json:"unknown"`
+	Up           int `json:"up"`
+	Warning      int `json:"warning"`
+	Down         int `json:"down"`
+	Acknowledged int `json:"acknowledged"`
+	Unreachable  int `json:"unreachable"`
+	Disabled     int `json:"disabled"`
+	Unknown      int `json:"unknown"`
 }
 
 func (c mapCounts) Status() string {
@@ -75,6 +76,8 @@ func (c mapCounts) Status() string {
 		return "down"
 	case c.Unreachable > 0:
 		return "unreachable"
+	case c.Acknowledged > 0:
+		return "acknowledged"
 	case c.Warning > 0:
 		return "warning"
 	case c.Up > 0 && c.Unknown == 0:
@@ -82,6 +85,14 @@ func (c mapCounts) Status() string {
 	default:
 		return "unknown"
 	}
+}
+
+func mapSummaryLabel(c mapCounts) string {
+	out := fmt.Sprintf("%d up · %d warn · %d down", c.Up, c.Warning, c.Down)
+	if c.Acknowledged > 0 {
+		out += fmt.Sprintf(" · %d ack", c.Acknowledged)
+	}
+	return out
 }
 
 func (s *Server) listMaps(w http.ResponseWriter, r *http.Request) {
@@ -101,18 +112,19 @@ func (s *Server) listMaps(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT m.id, COALESCE(m.parent_map_id::text,''), m.name, m.slug, m.description,
 		       m.grid_enabled, m.grid_size, m.snap_to_grid, m.background_color,
-		       COALESCE(c.up,0), COALESCE(c.warning,0), COALESCE(c.down,0),
+		       COALESCE(c.up,0), COALESCE(c.warning,0), COALESCE(c.down,0), COALESCE(c.acknowledged,0),
 		       COALESCE(c.unreachable,0), COALESCE(c.disabled,0), COALESCE(c.unknown,0)
 		FROM maps m
 		LEFT JOIN LATERAL (
 			SELECT count(*) FILTER (WHERE status='up') AS up,
 			       count(*) FILTER (WHERE status='warning') AS warning,
-			       count(*) FILTER (WHERE status IN ('down','acknowledged')) AS down,
-			       count(*) FILTER (WHERE status='unreachable') AS unreachable,
+			       count(*) FILTER (WHERE status='down' AND NOT is_acknowledged) AS down,
+			       count(*) FILTER (WHERE status='acknowledged' OR (status IN ('down','unreachable') AND is_acknowledged)) AS acknowledged,
+			       count(*) FILTER (WHERE status='unreachable' AND NOT is_acknowledged) AS unreachable,
 			       count(*) FILTER (WHERE status='disabled') AS disabled,
 			       count(*) FILTER (WHERE status='unknown') AS unknown
 			FROM (
-				SELECT DISTINCT d.id, d.status
+				SELECT DISTINCT d.id, d.status, d.is_acknowledged
 				FROM map_elements me JOIN devices d ON d.id=me.device_id
 				WHERE me.map_id IN (SELECT id FROM tree WHERE root_id=m.id)
 				  AND (NOT $1 OR d.id = ANY($2::uuid[]))
@@ -134,7 +146,7 @@ func (s *Server) listMaps(w http.ResponseWriter, r *http.Request) {
 		var snap bool
 		var c mapCounts
 		if err := rows.Scan(&id, &parent, &name, &slug, &desc, &grid, &gridSize, &snap, &bg,
-			&c.Up, &c.Warning, &c.Down, &c.Unreachable, &c.Disabled, &c.Unknown); err != nil {
+			&c.Up, &c.Warning, &c.Down, &c.Acknowledged, &c.Unreachable, &c.Disabled, &c.Unknown); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -202,7 +214,7 @@ func (s *Server) createMap(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getMap(w http.ResponseWriter, r *http.Request) {
-	var id, parent, name, slug, desc, bg, label, shape, align, bgImage, pollAgent string
+	var id, parent, name, slug, desc, bg, label, shape, bgImage, pollAgent string
 	var bgOpacity float64
 	var pollInterval, pollRetries, pollNotify int
 	var grid, snap bool
@@ -210,12 +222,12 @@ func (s *Server) getMap(w http.ResponseWriter, r *http.Request) {
 	var viewport []byte
 	err := s.pool.QueryRow(r.Context(), `
 		SELECT id, COALESCE(parent_map_id::text,''), name, slug, description, grid_enabled, grid_size,
-		       snap_to_grid, background_color, default_device_label, default_device_shape, label_align,
+		       snap_to_grid, background_color, default_device_label, default_device_shape,
 		       background_image, background_opacity, viewport,
 		       COALESCE(poll_interval_sec,0), COALESCE(poll_down_retries,0), COALESCE(poll_agent_id::text,''),
 		       COALESCE(poll_notifications_enabled::int,-1)
 		FROM maps WHERE id=$1
-	`, chi.URLParam(r, "id")).Scan(&id, &parent, &name, &slug, &desc, &grid, &size, &snap, &bg, &label, &shape, &align, &bgImage, &bgOpacity, &viewport,
+	`, chi.URLParam(r, "id")).Scan(&id, &parent, &name, &slug, &desc, &grid, &size, &snap, &bg, &label, &shape, &bgImage, &bgOpacity, &viewport,
 		&pollInterval, &pollRetries, &pollAgent, &pollNotify)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "map not found")
@@ -226,7 +238,7 @@ func (s *Server) getMap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"id": id, "parent_map_id": parent, "name": name, "slug": slug, "description": desc,
 		"grid_enabled": grid, "grid_size": size, "snap_to_grid": snap, "background_color": bg,
-		"default_device_label": label, "default_device_shape": shape, "label_align": align,
+		"default_device_label": label, "default_device_shape": shape,
 		"background_image": bgImage, "background_opacity": bgOpacity, "viewport": vp,
 		"poll_interval_sec": pollInterval, "poll_down_retries": pollRetries,
 		"poll_agent_id": pollAgent, "poll_notifications": pollNotify,
@@ -242,7 +254,6 @@ type updateMapRequest struct {
 	BackgroundColor   *string  `json:"background_color"`
 	DefaultLabel      *string  `json:"default_device_label"`
 	DefaultShape      *string  `json:"default_device_shape"`
-	LabelAlign        *string  `json:"label_align"`
 	BackgroundImage   *string  `json:"background_image"`
 	BackgroundOpacity *float64 `json:"background_opacity"`
 	PollInterval      *int     `json:"poll_interval_sec"`
@@ -258,14 +269,6 @@ func (s *Server) updateMap(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.LabelAlign != nil {
-		switch *req.LabelAlign {
-		case "left", "center", "right":
-		default:
-			writeError(w, http.StatusBadRequest, "label_align debe ser left, center o right")
-			return
-		}
-	}
 	vp, _ := json.Marshal(req.Viewport)
 	_, err := s.pool.Exec(r.Context(), `
 		UPDATE maps SET
@@ -274,18 +277,17 @@ func (s *Server) updateMap(w http.ResponseWriter, r *http.Request) {
 		 snap_to_grid=COALESCE($6,snap_to_grid), background_color=COALESCE($7,background_color),
 		 default_device_label=COALESCE($8,default_device_label),
 		 default_device_shape=COALESCE($10,default_device_shape),
-		 label_align=COALESCE($11,label_align),
-		 background_image=COALESCE($12,background_image),
-		 background_opacity=COALESCE($13,background_opacity),
-		 poll_interval_sec=CASE WHEN $14::int IN (0,-1) THEN NULL WHEN $14::int > 0 THEN $14 ELSE poll_interval_sec END,
-		 poll_down_retries=CASE WHEN $15::int IN (0,-1) THEN NULL WHEN $15::int > 0 THEN $15 ELSE poll_down_retries END,
-		 poll_agent_id=CASE WHEN $16::text IS NULL THEN poll_agent_id WHEN $16::text='' THEN NULL ELSE $16::uuid END,
-		 poll_notifications_enabled=CASE WHEN $17::int = -1 THEN NULL WHEN $17::int = 0 THEN FALSE WHEN $17::int = 1 THEN TRUE ELSE poll_notifications_enabled END,
+		 background_image=COALESCE($11,background_image),
+		 background_opacity=COALESCE($12,background_opacity),
+		 poll_interval_sec=CASE WHEN $13::int IN (0,-1) THEN NULL WHEN $13::int > 0 THEN $13 ELSE poll_interval_sec END,
+		 poll_down_retries=CASE WHEN $14::int IN (0,-1) THEN NULL WHEN $14::int > 0 THEN $14 ELSE poll_down_retries END,
+		 poll_agent_id=CASE WHEN $15::text IS NULL THEN poll_agent_id WHEN $15::text='' THEN NULL ELSE $15::uuid END,
+		 poll_notifications_enabled=CASE WHEN $16::int = -1 THEN NULL WHEN $16::int = 0 THEN FALSE WHEN $16::int = 1 THEN TRUE ELSE poll_notifications_enabled END,
 		 viewport=CASE WHEN $9::text='null' THEN viewport ELSE $9::jsonb END,
 		 updated_at=NOW()
 		WHERE id=$1
 	`, chi.URLParam(r, "id"), req.Name, req.Description, req.GridEnabled, req.GridSize,
-		req.SnapToGrid, req.BackgroundColor, req.DefaultLabel, string(vp), req.DefaultShape, req.LabelAlign,
+		req.SnapToGrid, req.BackgroundColor, req.DefaultLabel, string(vp), req.DefaultShape,
 		req.BackgroundImage, req.BackgroundOpacity, req.PollInterval, req.PollRetries, req.PollAgentID, req.PollNotifications)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -423,7 +425,7 @@ type labelVars struct {
 func (s *Server) getCanvas(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	mapID := chi.URLParam(r, "id")
-	var name, parent, desc, bg, defaultLabel, defaultShape, labelAlign, bgImage, pollAgent string
+	var name, parent, desc, bg, defaultLabel, defaultShape, bgImage, pollAgent string
 	var bgOpacity float64
 	var pollInterval, pollRetries, pollNotify int
 	var grid, snap bool
@@ -431,12 +433,12 @@ func (s *Server) getCanvas(w http.ResponseWriter, r *http.Request) {
 	var viewport []byte
 	err := s.pool.QueryRow(ctx, `
 		SELECT name, COALESCE(parent_map_id::text,''), description, grid_enabled, grid_size,
-		       snap_to_grid, background_color, default_device_label, default_device_shape, label_align,
+		       snap_to_grid, background_color, default_device_label, default_device_shape,
 		       background_image, background_opacity, viewport,
 		       COALESCE(poll_interval_sec,0), COALESCE(poll_down_retries,0),
 		       COALESCE(poll_agent_id::text,''), COALESCE(poll_notifications_enabled::int,-1)
 		FROM maps WHERE id=$1
-	`, mapID).Scan(&name, &parent, &desc, &grid, &gridSize, &snap, &bg, &defaultLabel, &defaultShape, &labelAlign, &bgImage, &bgOpacity, &viewport,
+	`, mapID).Scan(&name, &parent, &desc, &grid, &gridSize, &snap, &bg, &defaultLabel, &defaultShape, &bgImage, &bgOpacity, &viewport,
 		&pollInterval, &pollRetries, &pollAgent, &pollNotify)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "map not found")
@@ -474,16 +476,16 @@ func (s *Server) getCanvas(w http.ResponseWriter, r *http.Request) {
 			"id": mapID, "name": name, "parent_map_id": parent, "description": desc,
 			"grid_enabled": grid, "grid_size": gridSize, "snap_to_grid": snap,
 			"background_color": bg, "default_device_label": defaultLabel,
-			"default_device_shape": defaultShape, "label_align": labelAlign,
-			"background_image": bgImage, "background_opacity": bgOpacity, "viewport": vp,
+			"default_device_shape": defaultShape,
+			"background_image":     bgImage, "background_opacity": bgOpacity, "viewport": vp,
 			"poll_interval_sec": pollInterval, "poll_down_retries": pollRetries,
 			"poll_agent_id": pollAgent, "poll_notifications": pollNotify,
 		},
 		"elements": elements, "links": links,
 		"summary": map[string]any{
 			"up": summary.Up, "warning": summary.Warning, "down": summary.Down,
-			"unreachable": summary.Unreachable, "disabled": summary.Disabled,
-			"unknown": summary.Unknown, "status": summary.Status(),
+			"acknowledged": summary.Acknowledged, "unreachable": summary.Unreachable,
+			"disabled": summary.Disabled, "unknown": summary.Unknown, "status": summary.Status(),
 		},
 		"breadcrumbs": breadcrumbs,
 	}})
@@ -515,17 +517,18 @@ func (s *Server) computeMapSummary(ctx context.Context, mapID string, allowedDev
 		)
 		SELECT count(*) FILTER (WHERE status='up'),
 		       count(*) FILTER (WHERE status='warning'),
-		       count(*) FILTER (WHERE status IN ('down','acknowledged')),
-		       count(*) FILTER (WHERE status='unreachable'),
+		       count(*) FILTER (WHERE status='down' AND NOT is_acknowledged),
+		       count(*) FILTER (WHERE status='acknowledged' OR (status IN ('down','unreachable') AND is_acknowledged)),
+		       count(*) FILTER (WHERE status='unreachable' AND NOT is_acknowledged),
 		       count(*) FILTER (WHERE status='disabled'),
 		       count(*) FILTER (WHERE status='unknown')
 		FROM (
-			SELECT DISTINCT d.id, d.status
+			SELECT DISTINCT d.id, d.status, d.is_acknowledged
 			FROM map_elements me JOIN devices d ON d.id=me.device_id
 			WHERE me.map_id IN (SELECT id FROM tree)
 			  AND (NOT $2 OR d.id = ANY($3::uuid[]))
 		) unique_devices
-	`, mapID, restricted, allowedDevices).Scan(&c.Up, &c.Warning, &c.Down, &c.Unreachable, &c.Disabled, &c.Unknown)
+	`, mapID, restricted, allowedDevices).Scan(&c.Up, &c.Warning, &c.Down, &c.Acknowledged, &c.Unreachable, &c.Disabled, &c.Unknown)
 	return c
 }
 
@@ -542,30 +545,40 @@ func (s *Server) loadElements(ctx context.Context, mapID string, funcs map[strin
 		       COALESCE(d.root_cause_device_id::text,''), COALESCE(rc.name,''),
 		       COALESCE(d.tags,'{}'), COALESCE(d.custom_fields::text,'{}'),
 		       COALESCE(tm.name,''), COALESCE(tm.id::text,''),
-		       COALESCE(c.up,0), COALESCE(c.warning,0), COALESCE(c.down,0),
+		       COALESCE(c.up,0), COALESCE(c.warning,0), COALESCE(c.down,0), COALESCE(c.acknowledged,0),
 		       COALESCE(c.unreachable,0), COALESCE(c.disabled,0), COALESCE(c.unknown,0),
-		       COALESCE(n.up,0), COALESCE(n.warning,0), COALESCE(n.down,0),
+		       COALESCE(n.up,0), COALESCE(n.warning,0), COALESCE(n.down,0), COALESCE(n.acknowledged,0),
 		       COALESCE(n.unreachable,0), COALESCE(n.disabled,0), COALESCE(n.unknown,0)
 		FROM map_elements me
 		LEFT JOIN devices d ON d.id=me.device_id
 		LEFT JOIN devices rc ON rc.id=d.root_cause_device_id
 		LEFT JOIN maps tm ON tm.id=me.target_submap_id
 		LEFT JOIN LATERAL (
-			SELECT count(*) FILTER (WHERE d2.status='up') AS up,
-			       count(*) FILTER (WHERE d2.status='warning') AS warning,
-			       count(*) FILTER (WHERE d2.status IN ('down','acknowledged')) AS down,
-			       count(*) FILTER (WHERE d2.status='unreachable') AS unreachable,
-			       count(*) FILTER (WHERE d2.status='disabled') AS disabled,
-			       count(*) FILTER (WHERE d2.status='unknown') AS unknown
-			FROM map_elements me2 JOIN devices d2 ON d2.id=me2.device_id
-			WHERE me2.map_id=me.target_submap_id
-			  AND (NOT $2 OR d2.id = ANY($3::uuid[]))
+			WITH RECURSIVE subtree AS (
+				SELECT id FROM maps WHERE id=me.target_submap_id
+				UNION ALL
+				SELECT child.id FROM maps child JOIN subtree ON child.parent_map_id=subtree.id
+			)
+			SELECT count(*) FILTER (WHERE status='up') AS up,
+			       count(*) FILTER (WHERE status='warning') AS warning,
+			       count(*) FILTER (WHERE status='down' AND NOT is_acknowledged) AS down,
+			       count(*) FILTER (WHERE status='acknowledged' OR (status IN ('down','unreachable') AND is_acknowledged)) AS acknowledged,
+			       count(*) FILTER (WHERE status='unreachable' AND NOT is_acknowledged) AS unreachable,
+			       count(*) FILTER (WHERE status='disabled') AS disabled,
+			       count(*) FILTER (WHERE status='unknown') AS unknown
+			FROM (
+				SELECT DISTINCT d2.id, d2.status, d2.is_acknowledged
+				FROM map_elements me2 JOIN devices d2 ON d2.id=me2.device_id
+				WHERE me2.map_id IN (SELECT id FROM subtree)
+				  AND (NOT $2 OR d2.id = ANY($3::uuid[]))
+			) unique_devices
 		) c ON TRUE
 		LEFT JOIN LATERAL (
 			SELECT count(*) FILTER (WHERE d3.status='up') AS up,
 			       count(*) FILTER (WHERE d3.status='warning') AS warning,
-			       count(*) FILTER (WHERE d3.status IN ('down','acknowledged')) AS down,
-			       count(*) FILTER (WHERE d3.status='unreachable') AS unreachable,
+			       count(*) FILTER (WHERE d3.status='down' AND NOT d3.is_acknowledged) AS down,
+			       count(*) FILTER (WHERE d3.status='acknowledged' OR (d3.status IN ('down','unreachable') AND d3.is_acknowledged)) AS acknowledged,
+			       count(*) FILTER (WHERE d3.status='unreachable' AND NOT d3.is_acknowledged) AS unreachable,
 			       count(*) FILTER (WHERE d3.status='disabled') AS disabled,
 			       count(*) FILTER (WHERE d3.status='unknown') AS unknown
 			FROM devices d3
@@ -597,8 +610,8 @@ func (s *Server) loadElements(ctx context.Context, mapID string, funcs map[strin
 			&devName, &devIP, &devSecondary, &devStatus, &devReason, &ack, &rootCauseID, &rootCauseName,
 			&tags, &customJSON,
 			&submapName, &submapID,
-			&c.Up, &c.Warning, &c.Down, &c.Unreachable, &c.Disabled, &c.Unknown,
-			&nc.Up, &nc.Warning, &nc.Down, &nc.Unreachable, &nc.Disabled, &nc.Unknown); err != nil {
+			&c.Up, &c.Warning, &c.Down, &c.Acknowledged, &c.Unreachable, &c.Disabled, &c.Unknown,
+			&nc.Up, &nc.Warning, &nc.Down, &nc.Acknowledged, &nc.Unreachable, &nc.Disabled, &nc.Unknown); err != nil {
 			continue
 		}
 		var custom map[string]any
@@ -667,13 +680,17 @@ func (s *Server) renderElementLabel(ctx context.Context, template, devName, devI
 		"Device.RTT": "—", "Device.PacketLoss": "0%", "Device.Uptime": "—", "Device.ServicesDown": "0",
 		"Submap.Name": submapName, "Submap.Status": status, "Submap.StatusText": statusText(status),
 		"Submap.DevicesUp": strconv.Itoa(c.Up), "Submap.DevicesWarning": strconv.Itoa(c.Warning),
-		"Submap.DevicesDown": strconv.Itoa(c.Down), "Submap.DevicesUnreachable": strconv.Itoa(c.Unreachable),
-		"Submap.Summary": fmt.Sprintf("%d up · %d warn · %d down", c.Up, c.Warning, c.Down),
-		"Network.CIDR":   networkCIDR, "Network.Status": status, "Network.StatusText": statusText(status),
+		"Submap.DevicesDown":         strconv.Itoa(c.Down),
+		"Submap.DevicesAcknowledged": strconv.Itoa(c.Acknowledged),
+		"Submap.DevicesUnreachable":  strconv.Itoa(c.Unreachable),
+		"Submap.Summary":             mapSummaryLabel(c),
+		"Network.CIDR":               networkCIDR, "Network.Status": status, "Network.StatusText": statusText(status),
 		"Network.DevicesUp": strconv.Itoa(nc.Up), "Network.DevicesWarning": strconv.Itoa(nc.Warning),
-		"Network.DevicesDown": strconv.Itoa(nc.Down), "Network.DevicesUnreachable": strconv.Itoa(nc.Unreachable),
-		"Network.DevicesTotal": strconv.Itoa(nc.Up + nc.Warning + nc.Down + nc.Unreachable + nc.Disabled + nc.Unknown),
-		"Network.Summary":      fmt.Sprintf("%d up · %d warn · %d down", nc.Up, nc.Warning, nc.Down),
+		"Network.DevicesDown":         strconv.Itoa(nc.Down),
+		"Network.DevicesAcknowledged": strconv.Itoa(nc.Acknowledged),
+		"Network.DevicesUnreachable":  strconv.Itoa(nc.Unreachable),
+		"Network.DevicesTotal":        strconv.Itoa(nc.Up + nc.Warning + nc.Down + nc.Acknowledged + nc.Unreachable + nc.Disabled + nc.Unknown),
+		"Network.Summary":             mapSummaryLabel(nc),
 	}
 	for k, v := range custom {
 		vars["Device.Custom."+k] = fmt.Sprint(v)

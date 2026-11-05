@@ -514,7 +514,7 @@ export default function ReportsPage() {
         <Field label="Descripción"><input className="input" value={clientForm.description} onChange={e => setClientForm({ ...clientForm, description: e.target.value })} /></Field>
         <Field label="Etiquetas incluidas" hint="Separadas por coma. Vacío = todas."><input className="input" value={clientForm.tags.join(', ')} onChange={e => setClientForm({ ...clientForm, tags: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })} /></Field>
         <Field label="Mapas incluidos" hint="Vacío = todos los mapas.">
-          <div className="target-picker compact">{maps.map(m => <label key={m.id} className={clientForm.map_ids.includes(m.id) ? 'selected' : ''}><input type="checkbox" checked={clientForm.map_ids.includes(m.id)} onChange={e => setClientForm({ ...clientForm, map_ids: e.target.checked ? [...clientForm.map_ids, m.id] : clientForm.map_ids.filter(x => x !== m.id) })} /><span><b>{m.name}</b><small>{m.counts.up + m.counts.down + m.counts.warning + m.counts.unreachable} equipos</small></span></label>)}</div>
+          <div className="target-picker compact">{maps.map(m => <label key={m.id} className={clientForm.map_ids.includes(m.id) ? 'selected' : ''}><input type="checkbox" checked={clientForm.map_ids.includes(m.id)} onChange={e => setClientForm({ ...clientForm, map_ids: e.target.checked ? [...clientForm.map_ids, m.id] : clientForm.map_ids.filter(x => x !== m.id) })} /><span><b>{m.name}</b><small>{m.counts.up + m.counts.down + (m.counts.acknowledged || 0) + m.counts.warning + m.counts.unreachable} equipos</small></span></label>)}</div>
         </Field>
       </Modal>
 

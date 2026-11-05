@@ -56,18 +56,20 @@ import AddNodeModal from '../components/AddNodeModal'
 import DiscoveryModal from '../components/DiscoveryModal'
 import LinkDiscoveryModal from '../components/LinkDiscoveryModal'
 import { TextNodeMemo, ZoneNodeMemo } from '../components/MiscNode'
+import { elementDisplaySize } from '../mapSizing'
 
 const nodeTypes = { shapeNode: ShapeNode, zoneNode: ZoneNodeMemo, textNode: TextNodeMemo }
 const edgeTypes = { traffic: TrafficEdge }
 
 function elementToNode(el: CanvasElement, mapId?: string, onOpenSubmap?: (id: string) => void): Node {
   const type = el.element_type === 'zone' ? 'zoneNode' : el.element_type === 'text_label' ? 'textNode' : 'shapeNode'
+  const size = elementDisplaySize(el)
   return {
     id: el.id,
     type,
     position: { x: Number(el.pos_x), y: Number(el.pos_y) },
     data: { element: el, mapId, onOpenSubmap },
-    style: { width: Number(el.width), height: Number(el.height) },
+    style: { width: size.width, height: size.height },
     zIndex: Number(el.z_index),
   }
 }
@@ -105,7 +107,7 @@ function MapView() {
   const [mapForm, setMapForm] = useState({
     name: '', description: '', grid_enabled: true, grid_size: 16, snap_to_grid: true,
     background_color: '#FFFFFF', default_device_label: '[Device.Name]\n[Device.FirstAddress]',
-    default_device_shape: 'circle', label_align: 'left',
+    default_device_shape: 'circle',
     background_image: '', background_opacity: 1,
     poll_interval_sec: 0, poll_down_retries: 0, poll_agent_id: '', poll_notifications: -1,
   })
@@ -230,7 +232,13 @@ function MapView() {
           root_cause_device_id: p.root_cause_device_id ?? el.device.root_cause_device_id,
           root_cause: p.root_cause ?? el.device.root_cause,
         } : null
-        return { ...node, data: { ...node.data, element: { ...el, status: p.status, rendered_label: p.rendered_label || el.rendered_label, device } } }
+        const updated = { ...el, status: p.status, rendered_label: p.rendered_label || el.rendered_label, device }
+        const size = elementDisplaySize(updated)
+        return {
+          ...node,
+          style: { ...node.style, width: size.width, height: size.height },
+          data: { ...node.data, element: updated },
+        }
       }))
     }
     if (msg.type === 'SUBMAP_SUMMARY_PATCH') {
@@ -246,10 +254,16 @@ function MapView() {
       setNodes(prev => prev.map(node => {
         const el = (node.data as any).element as CanvasElement
         if (el.target_submap_id !== p.submap_id) return node
-        return { ...node, data: { ...node.data, element: {
+        const updated = {
           ...el, status: p.status, status_text: p.status_text,
           submap: el.submap ? { ...el.submap, status: p.status, counts: p.counts } : el.submap,
-        } } }
+        }
+        const size = elementDisplaySize(updated)
+        return {
+          ...node,
+          style: { ...node.style, width: size.width, height: size.height },
+          data: { ...node.data, element: updated },
+        }
       }))
     }
     if (msg.type === 'MAP_SUMMARY_PATCH') {
@@ -340,7 +354,6 @@ function MapView() {
       background_color: m.background_color || '#FFFFFF',
       default_device_label: m.default_device_label || '[Device.Name]\n[Device.FirstAddress]',
       default_device_shape: m.default_device_shape || 'circle',
-      label_align: m.label_align || 'left',
       background_image: m.background_image || '',
       background_opacity: m.background_opacity ?? 1,
       poll_interval_sec: m.poll_interval_sec || 0,
@@ -358,7 +371,6 @@ function MapView() {
     try {
       await apiSend(`/maps/${mapId}`, 'PATCH', {
         ...mapForm,
-        label_align: mapForm.label_align,
         default_device_shape: mapForm.default_device_shape,
       })
       window.dispatchEvent(new Event('netmonitor:maps-changed'))
@@ -569,7 +581,7 @@ function MapView() {
   if (!data) return null
 
   return (
-    <div className={`map-page label-align-${data?.map?.label_align || 'left'} ${noc ? 'noc' : ''}`}>
+    <div className={`map-page ${noc ? 'noc' : ''}`}>
       <div className="map-main">
         <div className="map-header">
           <div className="map-title-wrap">
@@ -587,6 +599,7 @@ function MapView() {
                 <span className="ok"><i />{summary?.up ?? 0}</span>
                 <span className="warn"><i />{summary?.warning ?? 0}</span>
                 <span className="danger"><i />{summary?.down ?? 0}</span>
+                <span className="ack"><i />{summary?.acknowledged ?? 0}</span>
                 <span className="violet"><i />{summary?.unreachable ?? 0}</span>
               </div>
             </div>
@@ -775,13 +788,6 @@ function MapView() {
           <Field label="Nombre"><input className="input" value={mapForm.name} onChange={e => setMapForm({ ...mapForm, name: e.target.value })} /></Field>
           <Field label="Color de fondo"><input className="input color-input" type="color" value={mapForm.background_color} onChange={e => setMapForm({ ...mapForm, background_color: e.target.value })} /></Field>
           <Field label="Tamaño de cuadrícula"><input className="input" type="number" min={4} max={100} value={mapForm.grid_size} onChange={e => setMapForm({ ...mapForm, grid_size: Number(e.target.value) })} /></Field>
-          <Field label="Alineación de textos">
-            <select className="input" value={mapForm.label_align} onChange={e => setMapForm({ ...mapForm, label_align: e.target.value })}>
-              <option value="left">Izquierda</option>
-              <option value="center">Centro</option>
-              <option value="right">Derecha</option>
-            </select>
-          </Field>
           <Field label="Forma por defecto">
             <select className="input" value={mapForm.default_device_shape} onChange={e => setMapForm({ ...mapForm, default_device_shape: e.target.value })}>
               <option value="circle">Círculo</option>

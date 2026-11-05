@@ -86,6 +86,7 @@ func (p *Poller) NotifyAck(ctx context.Context, deviceID string) {
 		ctx = context.Background()
 	}
 	name, ip, mapID, mapName := p.alertTarget(ctx, deviceID)
+	p.recalcMapSummaries(ctx, deviceID)
 	p.notifyExternal(ctx, deviceID, mapID, name, ip, mapName, "acknowledged", "Incidencia reconocida")
 }
 

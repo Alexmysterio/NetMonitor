@@ -275,7 +275,7 @@ export default function AddNodeModal({
           {maps.map(m => (
             <button key={m.id} className={`device-pick ${selectedSubmap === m.id ? 'selected' : ''}`} onClick={() => setSelectedSubmap(m.id)}>
               <Building2 size={17} />
-              <div><b>{m.name}</b><span>{m.counts.up + m.counts.warning + m.counts.down} dispositivos</span></div>
+              <div><b>{m.name}</b><span>{m.counts.up + m.counts.warning + m.counts.down + (m.counts.acknowledged || 0)} dispositivos</span></div>
               {selectedSubmap === m.id && <Check size={15} className="pick-check" />}
             </button>
           ))}

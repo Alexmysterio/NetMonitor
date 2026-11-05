@@ -198,6 +198,7 @@ export default function DevicesPage() {
   const ack = async (d: Device) => {
     if (d.is_acknowledged) await apiSend(`/devices/${d.id}/acknowledge`, 'DELETE')
     else await apiSend(`/devices/${d.id}/acknowledge`, 'POST', { note: 'Ack desde inventario', duration_minutes: 0 })
+    window.dispatchEvent(new Event('netmonitor:maps-changed'))
     const full = await apiGet<Device>(`/devices/${d.id}`)
     setDetail(full)
     setSelected(full)
@@ -257,6 +258,9 @@ export default function DevicesPage() {
       if (actionName === 'tags_add' || actionName === 'tags_remove') payload.tags = [bulkTag.trim()]
       if (action === 'monitoring') payload.enabled = actionName === 'monitoring_on'
       const res = await apiSend<{ updated?: number; deleted?: number }>('/devices/bulk', 'POST', payload)
+      if (actionName === 'acknowledge' || actionName === 'unacknowledge') {
+        window.dispatchEvent(new Event('netmonitor:maps-changed'))
+      }
       flash(actionName === 'delete'
         ? `${res.deleted ?? bulkSelected.length} dispositivos eliminados`
         : `${res.updated ?? bulkSelected.length} dispositivos actualizados`)

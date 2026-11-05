@@ -5,6 +5,7 @@ export interface Counts {
   up: number
   warning: number
   down: number
+  acknowledged: number
   unreachable: number
   disabled: number
   unknown: number
@@ -36,7 +37,6 @@ export interface MapMeta {
   background_color: string
   default_device_label: string
   default_device_shape: string
-  label_align: 'left' | 'center' | 'right'
   background_image: string
   background_opacity: number
   poll_interval_sec: number

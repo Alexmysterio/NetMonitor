@@ -828,22 +828,33 @@ func (p *Poller) recalcMapSummaries(ctx context.Context, deviceID string) {
 	rows.Close()
 
 	for _, mapID := range mapIDs {
-		var up, warn, down, unreachable, disabled int
+		var up, warn, down, ack, unreachable, disabled int
 		_ = p.pool.QueryRow(ctx, `
+			WITH RECURSIVE tree AS (
+				SELECT id FROM maps WHERE id=$1
+				UNION ALL
+				SELECT child.id FROM maps child JOIN tree ON child.parent_map_id=tree.id
+			)
 			SELECT
-			  count(*) FILTER (WHERE d.status='up'),
-			  count(*) FILTER (WHERE d.status='warning'),
-			  count(*) FILTER (WHERE d.status IN ('down','acknowledged')),
-			  count(*) FILTER (WHERE d.status='unreachable'),
-			  count(*) FILTER (WHERE d.status IN ('disabled','unknown'))
-			FROM map_elements me JOIN devices d ON d.id=me.device_id
-			WHERE me.map_id=$1
-		`, mapID).Scan(&up, &warn, &down, &unreachable, &disabled)
+			  count(*) FILTER (WHERE status='up'),
+			  count(*) FILTER (WHERE status='warning'),
+			  count(*) FILTER (WHERE status='down' AND NOT is_acknowledged),
+			  count(*) FILTER (WHERE status='acknowledged' OR (status IN ('down','unreachable') AND is_acknowledged)),
+			  count(*) FILTER (WHERE status='unreachable' AND NOT is_acknowledged),
+			  count(*) FILTER (WHERE status IN ('disabled','unknown'))
+			FROM (
+				SELECT DISTINCT d.id, d.status, d.is_acknowledged
+				FROM map_elements me JOIN devices d ON d.id=me.device_id
+				WHERE me.map_id IN (SELECT id FROM tree)
+			) unique_devices
+		`, mapID).Scan(&up, &warn, &down, &ack, &unreachable, &disabled)
 		status := "up"
 		if down > 0 {
 			status = "down"
 		} else if unreachable > 0 {
 			status = "unreachable"
+		} else if ack > 0 {
+			status = "acknowledged"
 		} else if warn > 0 {
 			status = "warning"
 		} else if up == 0 {
@@ -851,13 +862,13 @@ func (p *Poller) recalcMapSummaries(ctx context.Context, deviceID string) {
 		}
 		p.store.SetMapSummary(ctx, mapID, map[string]any{
 			"status": status, "up": up, "warning": warn, "down": down,
-			"unreachable": unreachable, "disabled": disabled,
+			"acknowledged": ack, "unreachable": unreachable, "disabled": disabled,
 		})
 		p.hub.BroadcastMap(mapID, map[string]any{
 			"type": "MAP_SUMMARY_PATCH",
 			"payload": map[string]any{
 				"map_id": mapID, "status": status, "up": up, "warning": warn,
-				"down": down, "unreachable": unreachable, "disabled": disabled,
+				"down": down, "acknowledged": ack, "unreachable": unreachable, "disabled": disabled,
 			},
 		})
 		// Propagate to maps that show this map as a submap node.
@@ -872,7 +883,8 @@ func (p *Poller) recalcMapSummaries(ctx context.Context, deviceID string) {
 				"type": "SUBMAP_SUMMARY_PATCH",
 				"payload": map[string]any{
 					"submap_id": mapID, "status": status, "counts": map[string]int{
-						"up": up, "warning": warn, "down": down, "unreachable": unreachable,
+						"up": up, "warning": warn, "down": down, "acknowledged": ack,
+						"unreachable": unreachable,
 					},
 				},
 			})

@@ -1274,7 +1274,7 @@ export default function SettingsPage() {
               <input type="checkbox" checked={accessMaps.includes(m.id)} onChange={e => setAccessMaps(e.target.checked ? [...accessMaps, m.id] : accessMaps.filter(id => id !== m.id))} />
               <span className={`map-tree-status status-${m.status}`} />
               <span>{m.name}</span>
-              <small>{m.counts.up + m.counts.warning + m.counts.down + m.counts.unreachable} dispositivos</small>
+              <small>{m.counts.up + m.counts.warning + m.counts.down + (m.counts.acknowledged || 0) + m.counts.unreachable} dispositivos</small>
             </label>
           ))}
           {!allMaps.length && <span className="muted small">No hay mapas.</span>}

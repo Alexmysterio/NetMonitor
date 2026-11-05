@@ -375,6 +375,7 @@ function ElementInspector({
     } else {
       await apiSend(`/devices/${element.device_id}/acknowledge`, 'POST', { note: 'Reconocido desde el mapa', duration_minutes: 0 })
     }
+    window.dispatchEvent(new Event('netmonitor:maps-changed'))
     onRefresh()
     if (device) setDevice({ ...device, is_acknowledged: !device.is_acknowledged })
   }
@@ -420,7 +421,7 @@ function ElementInspector({
     .replace(/\[Device\.FirstAddress\]/g, device?.primary_ip || '')
     .replace(/\[Device\.StatusText\]/g, element.status_text || '')
     .replace(/\[Submap\.Name\]/g, element.submap?.name || '')
-    .replace(/\[Submap\.Summary\]/g, element.submap ? `${element.submap.counts.up} up · ${element.submap.counts.warning} warn · ${element.submap.counts.down} down` : '')
+    .replace(/\[Submap\.Summary\]/g, element.submap ? `${element.submap.counts.up} up · ${element.submap.counts.warning} warn · ${element.submap.counts.down} down${(element.submap.counts.acknowledged || 0) > 0 ? ` · ${element.submap.counts.acknowledged} ack` : ''}` : '')
   const previewLines = previewLabel.split('\n').filter(Boolean)
   const previewShape = shape === 'circle'
     ? { borderRadius: '50%' }
@@ -456,6 +457,7 @@ function ElementInspector({
             <div><b className="ok">{element.submap?.counts.up ?? 0}</b><span>Operativos</span></div>
             <div><b className="warn">{element.submap?.counts.warning ?? 0}</b><span>Avisos</span></div>
             <div><b className="danger">{element.submap?.counts.down ?? 0}</b><span>Caídos</span></div>
+            <div><b className="ack">{element.submap?.counts.acknowledged ?? 0}</b><span>Reconocidos</span></div>
             <div><b className="violet">{element.submap?.counts.unreachable ?? 0}</b><span>Aislados</span></div>
           </div>
           <Button variant="primary" onClick={() => element.target_submap_id && onNavigate(element.target_submap_id)}>

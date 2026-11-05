@@ -69,8 +69,8 @@ function ShapeNode({ data, selected }: NodeProps<Node<ShapeNodeData>>) {
         )}
         <div className="node-text">
           <div className="node-title">{title}</div>
-          {sublines.slice(0, circle ? 2 : 3).map((line, i) => (
-            <div key={i} className={`node-subline ${i === 0 && /\d+\.\d+\.\d+\.\d+/.test(line) ? 'mono' : ''}`}>{line}</div>
+          {sublines.map((line, i) => (
+            <div key={i} className={`node-subline ${/\d+\.\d+\.\d+\.\d+/.test(line) ? 'mono' : ''}`}>{line}</div>
           ))}
         </div>
       </div>
@@ -86,6 +86,7 @@ function ShapeNode({ data, selected }: NodeProps<Node<ShapeNodeData>>) {
           <span className="sm-up">● {element.submap.counts.up}</span>
           {element.submap.counts.warning > 0 && <span className="sm-warn">● {element.submap.counts.warning}</span>}
           {element.submap.counts.down > 0 && <span className="sm-down">● {element.submap.counts.down}</span>}
+          {(element.submap.counts.acknowledged || 0) > 0 && <span className="sm-ack">● {element.submap.counts.acknowledged}</span>}
           {element.submap.counts.unreachable > 0 && <span className="sm-unreach">● {element.submap.counts.unreachable}</span>}
           <span className="sm-open">abrir →</span>
         </div>

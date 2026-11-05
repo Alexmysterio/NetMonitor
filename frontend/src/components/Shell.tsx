@@ -194,9 +194,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <span className={`map-tree-status ${statusClass(m.status)}`} />
           <span className="map-tree-name">{m.name}</span>
           <span className="map-tree-count">
-            {m.counts.down > 0 ? <em className="danger">{m.counts.down}</em> : m.counts.warning > 0 ? <em className="warn">{m.counts.warning}</em> : null}
-            {m.counts.up + m.counts.down + m.counts.warning + m.counts.unreachable + (m.counts.disabled || 0) + (m.counts.unknown || 0) > 0 && (
-              <span>{m.counts.up + m.counts.down + m.counts.warning + m.counts.unreachable + (m.counts.disabled || 0) + (m.counts.unknown || 0)}</span>
+            {m.counts.down > 0 ? <em className="danger">{m.counts.down}</em> : (m.counts.acknowledged || 0) > 0 ? <em className="ack">{m.counts.acknowledged}</em> : m.counts.warning > 0 ? <em className="warn">{m.counts.warning}</em> : null}
+            {m.counts.up + m.counts.down + (m.counts.acknowledged || 0) + m.counts.warning + m.counts.unreachable + (m.counts.disabled || 0) + (m.counts.unknown || 0) > 0 && (
+              <span>{m.counts.up + m.counts.down + (m.counts.acknowledged || 0) + m.counts.warning + m.counts.unreachable + (m.counts.disabled || 0) + (m.counts.unknown || 0)}</span>
             )}
           </span>
         </Link>

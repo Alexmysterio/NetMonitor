@@ -63,6 +63,7 @@ a { color: inherit; text-decoration: none; }
 .ok { color: var(--up) !important; }
 .warn { color: var(--warn) !important; }
 .danger { color: var(--down) !important; }
+.ack { color: var(--ack) !important; }
 .violet { color: var(--violet) !important; }
 
 /* ─── Status semantics ───────────────────────────────────────────────────── */
@@ -385,23 +386,18 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .shape-node.status-down .node-shape-svg > * { fill: #fef2f2; }
 .shape-node.status-unreachable .node-shape-svg > * { stroke-dasharray: 6 3; }
 .shape-node:hover .node-shape-svg > * { fill: color-mix(in srgb, var(--st-soft) 70%, white); }
-.node-content { position: absolute; inset: 0; padding: 8px 11px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 4px; overflow: hidden; border-radius: 12px; }
-.is-round .node-content { align-items: center; text-align: inherit; padding: 12px 12px; justify-content: center; }
+.node-content { position: absolute; inset: 0; padding: 8px 11px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 4px; overflow: hidden; border-radius: 12px; text-align: center; }
+.is-round .node-content { align-items: center; padding: 12px 12px; justify-content: center; }
 .node-icon { width: auto; height: auto; border-radius: 0; background: transparent; color: var(--st); display: flex; align-items: center; justify-content: center; border: 0; }
 .center-icon { margin-bottom: 0; width: auto; height: auto; border-radius: 0; }
 .node-icon-img { width: 44px; height: 44px; object-fit: contain; display: block; }
 .is-round .node-icon-img { width: 42px; height: 42px; }
-.node-text { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 1px; align-items: flex-start; }
-.node-title { font-size: 11.5px; font-weight: 700; letter-spacing: -0.015em; color: #0f172a; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.is-round .node-title { font-size: 10px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.15; }
-.node-subline { font-size: 9.2px; color: #64748b; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.is-round .node-subline { font-size: 8.3px; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.node-text { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 1px; align-items: center; text-align: center; }
+.node-title { font-size: 11.5px; font-weight: 700; letter-spacing: -0.015em; color: #0f172a; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; text-align: center; }
+.is-round .node-title { font-size: 10px; line-height: 1.15; }
+.node-subline { font-size: 9.2px; color: #64748b; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; text-align: center; }
+.is-round .node-subline { font-size: 8.3px; }
 .node-subline.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 8.8px; color: #475569; }
-.map-page.label-align-left .node-text { align-items: flex-start; text-align: left; }
-.map-page.label-align-center .node-text { align-items: center; text-align: center; }
-.map-page.label-align-right .node-text { align-items: flex-end; text-align: right; }
-.map-page.label-align-center .text-node { text-align: center; justify-content: center; }
-.map-page.label-align-right .text-node { text-align: right; justify-content: flex-end; }
 .node-state-line { position: absolute; bottom: 7px; left: 13px; display: flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 7.5px; font-weight: 700; letter-spacing: .08em; color: var(--st); opacity: .9; }
 .node-state-line span { width: 4px; height: 4px; border-radius: 50%; background: var(--st); }
 .is-round .node-state-line { bottom: 8px; left: 50%; transform: translateX(-50%); }
@@ -416,7 +412,7 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .shape-circle .node-issue-badge { right: 24%; top: 10%; }
 .node-issue-badge.ack { background: #2563eb; }
 .submap-footer { position: absolute; bottom: 5px; left: 12px; right: 12px; display: flex; align-items: center; gap: 8px; padding-top: 5px; border-top: 1px solid rgba(255, 255, 255, .7); font-size: 8px; font-weight: 650; }
-.submap-footer .sm-up { color: #15803d; } .submap-footer .sm-warn { color: #b45309; } .submap-footer .sm-down { color: #b91c1c; } .submap-footer .sm-unreach { color: #c2410c; }
+.submap-footer .sm-up { color: #15803d; } .submap-footer .sm-warn { color: #b45309; } .submap-footer .sm-down { color: #b91c1c; } .submap-footer .sm-ack { color: #1d4ed8; } .submap-footer .sm-unreach { color: #c2410c; }
 .submap-footer .sm-open { margin-left: auto; color: #94a3b8; font-weight: 500; }
 .shape-node .node-handle { width: 7px; height: 7px; background: #fff; border: 2px solid var(--st); opacity: 0; transition: opacity .12s; }
 .shape-node:hover .node-handle { opacity: 1; }
@@ -433,8 +429,8 @@ select.input { appearance: none; background-image: url("data:image/svg+xml,%3Csv
 .react-flow__edgelabel-renderer { z-index: 6 !important; }
 .zone-node.selected { box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
 .zone-rotate-handle { position: absolute; top: -26px; left: 50%; margin-left: -12px; width: 24px; height: 24px; border-radius: 99px; background: #fff; border: 1px solid #cbd5e1; color: #2563eb; display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: grab; box-shadow: 0 2px 6px rgba(15, 23, 42, .12); user-select: none; }
-.zone-title { font-size: 9px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.text-node { width: 100%; height: 100%; display: flex; align-items: flex-start; justify-content: flex-start; padding: 4px 7px; white-space: pre-wrap; overflow: auto; border: 1px solid transparent; border-radius: 7px; line-height: 1.35; }
+.zone-title { font-size: 9px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; opacity: .85; white-space: normal; overflow-wrap: anywhere; text-align: center; line-height: 1.25; }
+.text-node { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 4px 7px; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; text-align: center; border: 1px solid transparent; border-radius: 7px; line-height: 1.35; }
 .text-node.selected { border-color: #93b4f7; background: #f8faff; }
 .color-input { padding: 4px; height: 38px; }
 .shape-pill-icon { display: inline-block; width: 14px; height: 9px; border: 1.5px solid currentColor; border-radius: 999px; }
