@@ -51,6 +51,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const { connected, toasts, dismissToast, soundEnabled, setSoundEnabled, refreshKey } = useRealtime()
   const user = getUser()
+  const activeOutages = summary?.active_outages ?? 0
+  const activeOutagesUnack = summary?.active_outages_unacknowledged ?? activeOutages
 
   const load = async () => {
     try {
@@ -239,7 +241,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           </Link>
           <Link to="/outages" className={`side-link ${activeNav('/outages') ? 'active' : ''}`}>
             <ShieldAlert size={17} /><span>Caídas e incidencias</span>
-            {!!summary?.active_outages && <span className="side-count urgent">{summary.active_outages}</span>}
+            {activeOutages > 0 && <span className={`side-count ${activeOutagesUnack > 0 ? 'urgent' : 'ack-count'}`}>{activeOutages}</span>}
           </Link>
           <Link to="/probes" className={`side-link ${activeNav('/probes') ? 'active' : ''}`}>
             <Activity size={17} /><span>Sondas y funciones</span>
@@ -330,7 +332,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             </IconButton>
             <Link to="/outages" className="topbar-bell">
               <Bell size={18} />
-              {!!summary?.active_outages && <span>{summary.active_outages}</span>}
+              {activeOutages > 0 && <span className={activeOutagesUnack > 0 ? '' : 'is-ack'}>{activeOutages}</span>}
             </Link>
             <div className="topbar-avatar">{(user?.display_name || user?.username || 'A').slice(0, 1).toUpperCase()}</div>
           </div>

@@ -361,6 +361,8 @@ export interface DashboardSummary {
   maps: number
   probes: number
   active_outages: number
+  active_outages_acknowledged: number
+  active_outages_unacknowledged: number
   server_time: string
 }
 

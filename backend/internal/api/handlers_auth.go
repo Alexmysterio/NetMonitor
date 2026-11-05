@@ -99,6 +99,7 @@ func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var up, warning, down, unreachable, disabled, unknown, devices, maps, probes, activeOutages int
+	var activeOutagesAck int
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*),
 		 count(*) FILTER (WHERE status='up'),
@@ -118,15 +119,18 @@ func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM maps WHERE (NOT $1 OR id = ANY($2::uuid[]))`, restrictedMaps, allowedMapList).Scan(&maps)
 	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM probes`).Scan(&probes)
 	_ = s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM outages
+		SELECT count(*), count(*) FILTER (WHERE acknowledged)
+		FROM outages
 		WHERE ended_at IS NULL AND (NOT $1 OR device_id = ANY($2::uuid[]))
 		  AND (NOT $3 OR EXISTS (SELECT 1 FROM map_elements me WHERE me.device_id=outages.device_id AND me.map_id = ANY($4::uuid[])))
-	`, restrictedGroups, allowedDevices, restrictedMaps, allowedMapList).Scan(&activeOutages)
+	`, restrictedGroups, allowedDevices, restrictedMaps, allowedMapList).Scan(&activeOutages, &activeOutagesAck)
 	out["devices"] = map[string]int{"total": devices, "up": up, "warning": warning, "down": down,
 		"unreachable": unreachable, "disabled": disabled, "unknown": unknown}
 	out["maps"] = maps
 	out["probes"] = probes
 	out["active_outages"] = activeOutages
+	out["active_outages_acknowledged"] = activeOutagesAck
+	out["active_outages_unacknowledged"] = activeOutages - activeOutagesAck
 	out["server_time"] = time.Now().UTC()
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": out})
 }

@@ -24,6 +24,8 @@ export default function OutagesPage() {
 
   const list = useMemo(() => filter === 'active' ? outages.filter(o => !o.ended_at) : outages, [outages, filter])
   const active = outages.filter(o => !o.ended_at)
+  const activeUnack = active.filter(o => !o.acknowledged)
+  const activeAck = active.filter(o => o.acknowledged)
   const totalActive = active.reduce((acc, o) => acc + o.duration_sec, 0)
 
   const ack = async (o: Outage) => {
@@ -31,6 +33,7 @@ export default function OutagesPage() {
     try {
       await apiSend(`/outages/${o.id}/acknowledge`, 'POST', { note: 'Reconocido desde incidencias' })
       await apiSend(`/devices/${o.device_id}/acknowledge`, 'POST', { note: 'Reconocido desde incidencias', duration_minutes: 0 })
+      window.dispatchEvent(new Event('netmonitor:maps-changed'))
       await load()
     } finally {
       setAcking('')
@@ -46,7 +49,8 @@ export default function OutagesPage() {
           <p className="page-subtitle">Registro forense de indisponibilidad, MTTR y reconocimiento de alertas.</p>
         </div>
         <div className="page-head-actions">
-          <div className="page-stat"><b className="danger">{active.length}</b><span>activas</span></div>
+          <div className="page-stat"><b className={activeUnack.length ? 'danger' : activeAck.length ? 'ack' : ''}>{active.length}</b><span>activas</span></div>
+          {activeAck.length > 0 && <div className="page-stat"><b className="ack">{activeAck.length}</b><span>en ACK</span></div>}
           <div className="page-stat"><b>{formatDuration(totalActive)}</b><span>tiempo acumulado</span></div>
         </div>
       </div>
@@ -65,7 +69,7 @@ export default function OutagesPage() {
             </div>
             {list.map(o => (
               <div className="data-row" key={o.id}>
-                <span><StatusBadge status={o.severity === 'critical' ? 'down' : o.severity} /></span>
+                <span><StatusBadge status={o.acknowledged ? 'acknowledged' : o.severity === 'critical' ? 'down' : o.severity} /></span>
                 <span className="cell-main"><b>{o.device_name}</b><small className="mono">{o.primary_ip}</small>{o.root_cause && <small className="correlation-pill">Causa: {o.root_cause}</small>}{o.suppress_notifications && <small className="suppressed-pill">Alarma suprimida</small>}</span>
                 <span className="muted small">{timeAgo(o.started_at)}</span>
                 <span className="mono">{formatDuration(o.duration_sec)}</span>

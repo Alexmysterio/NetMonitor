@@ -49,6 +49,7 @@ export default function AlertsDrawer({
     try {
       await apiSend(`/outages/${o.id}/acknowledge`, 'POST', { note: 'Reconocido desde el panel NOC' })
       await apiSend(`/devices/${o.device_id}/acknowledge`, 'POST', { note: 'Reconocido desde el panel NOC', duration_minutes: 0 })
+      window.dispatchEvent(new Event('netmonitor:maps-changed'))
       await load()
       onRefresh()
     } finally {
@@ -56,12 +57,14 @@ export default function AlertsDrawer({
     }
   }
 
-  const critical = outages.filter(o => o.severity === 'critical' || o.severity === 'down').length
+  const critical = outages.filter(o => !o.acknowledged && (o.severity === 'critical' || o.severity === 'down')).length
+  const acknowledged = outages.filter(o => o.acknowledged).length
+  const allAcknowledged = outages.length > 0 && acknowledged === outages.length
 
   return (
     <div className={`alerts-drawer ${open ? 'open' : ''}`}>
       <button className="alerts-head" onClick={() => setOpen(!open)}>
-        <span className={`alerts-pulse ${critical ? 'critical' : outages.length ? 'warning' : 'ok'}`} />
+        <span className={`alerts-pulse ${critical ? 'critical' : allAcknowledged ? 'ack' : outages.length ? 'warning' : 'ok'}`} />
         <span className="alerts-title">Incidencias activas</span>
         <span className="alerts-count">{outages.length}</span>
         {outages.length > 0 && <span className="alerts-latest">{outages[0].device_name} · {timeAgo(outages[0].started_at)}</span>}
@@ -81,7 +84,7 @@ export default function AlertsDrawer({
             <div className="outage-list">
               {outages.map(o => (
                 <div key={o.id} className="outage-row">
-                  <StatusBadge status={o.severity === 'critical' ? 'down' : o.severity} />
+                  <StatusBadge status={o.acknowledged ? 'acknowledged' : o.severity === 'critical' ? 'down' : o.severity} />
                   <div className="outage-main">
                     <b>{o.device_name}</b>
                     <span className="mono">{o.primary_ip}</span>
@@ -90,7 +93,7 @@ export default function AlertsDrawer({
                   <div className="outage-duration"><Clock3 size={12} /> {formatDuration(o.duration_sec)}</div>
                   <div className="outage-actions">
                     {o.map_id && o.map_id !== currentMapId && <button onClick={() => onNavigate(o.map_id)} title="Ir al mapa"><ArrowUpRight size={14} /></button>}
-                    <Button variant="secondary" size="sm" disabled={acking === o.id} onClick={() => acknowledge(o)}>
+                    <Button variant="secondary" size="sm" disabled={o.acknowledged || acking === o.id} onClick={() => acknowledge(o)}>
                       <Check size={13} /> {o.acknowledged ? 'Reconocida' : 'Reconocer'}
                     </Button>
                   </div>
