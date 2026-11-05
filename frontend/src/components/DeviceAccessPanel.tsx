@@ -53,9 +53,9 @@ export default function DeviceAccessPanel({
   const [saving, setSaving] = useState(false)
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
-  const [winboxError, setWinboxError] = useState('')
-  const [winboxHint, setWinboxHint] = useState(false)
-  const [winboxUrl, setWinboxUrl] = useState('')
+  const [bridgeError, setBridgeError] = useState('')
+  const [bridgeKind, setBridgeKind] = useState<'' | 'winbox' | 'ssh'>('')
+  const [bridgeUrl, setBridgeUrl] = useState('')
   const [form, setForm] = useState({
     username: '', password: '', port: 0, use_tls: false, path: '', notes: '',
   })
@@ -76,9 +76,9 @@ export default function DeviceAccessPanel({
     setAccess([])
     setError('')
     setNotice('')
-    setWinboxError('')
-    setWinboxHint(false)
-    setWinboxUrl('')
+    setBridgeError('')
+    setBridgeKind('')
+    setBridgeUrl('')
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId])
@@ -180,28 +180,22 @@ export default function DeviceAccessPanel({
     setNotice(`Usuario de ${KIND_LABEL[kind]} copiado.`)
   }
 
-  const openWinbox = async () => {
+  const openBridge = async (kind: 'winbox' | 'ssh') => {
     if (!deviceId) return
-    setBusy('winbox')
-    setWinboxError('')
-    setWinboxHint(false)
-    setWinboxUrl('')
+    setBusy(kind)
+    setBridgeError('')
+    setBridgeKind('')
+    setBridgeUrl('')
     try {
-      const data = await apiSend<{ url: string }>('/tools/winbox/ticket', 'POST', { device_id: deviceId })
-      setWinboxUrl(data.url)
+      const data = await apiSend<{ url: string }>('/tools/winbox/ticket', 'POST', { device_id: deviceId, kind })
+      setBridgeUrl(data.url)
       window.location.href = data.url
-      setWinboxHint(true)
+      setBridgeKind(kind)
     } catch (e) {
-      setWinboxError((e as Error).message)
+      setBridgeError((e as Error).message)
     } finally {
       setBusy('')
     }
-  }
-
-  const openSsh = () => {
-    if (!ssh?.username || !host) return
-    const port = ssh.port && ssh.port !== 22 ? `:${ssh.port}` : ''
-    window.location.href = `ssh://${encodeURIComponent(ssh.username)}@${endpointHost(host)}${port}`
   }
 
   const openWeb = async () => {
@@ -215,11 +209,11 @@ export default function DeviceAccessPanel({
   }
 
   const downloadBridge = async () => {
-    setWinboxError('')
+    setBridgeError('')
     try {
       await apiDownload('/tools/winbox/bridge', 'netmonitor-winbox-bridge.cmd')
     } catch (e) {
-      setWinboxError((e as Error).message)
+      setBridgeError((e as Error).message)
     }
   }
 
@@ -233,11 +227,11 @@ export default function DeviceAccessPanel({
   return (
     <div className="access-panel">
       <div className="access-toolbar">
-        <Button size="sm" variant="primary" onClick={() => void openWinbox()} disabled={!winbox || winbox.source === 'none' || busy === 'winbox'}>
+        <Button size="sm" variant="primary" onClick={() => void openBridge('winbox')} disabled={!winbox || winbox.source === 'none' || busy === 'winbox'}>
           <Monitor size={14} /> {busy === 'winbox' ? 'Preparando…' : 'Winbox'}
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => void openSsh()} disabled={!ssh?.username || !host}>
-          <Terminal size={14} /> SSH
+        <Button size="sm" variant="secondary" onClick={() => void openBridge('ssh')} disabled={!ssh?.username || busy === 'ssh'}>
+          <Terminal size={14} /> {busy === 'ssh' ? 'Preparando…' : 'SSH'}
         </Button>
         <Button size="sm" variant="secondary" onClick={() => void openWeb()} disabled={!host}>
           <Globe size={14} /> Web
@@ -245,21 +239,21 @@ export default function DeviceAccessPanel({
       </div>
 
       <div className="access-note">
-        Winbox se abre con el puente local. SSH abre el cliente del sistema; Web abre el navegador y copia la contraseña.
+        Winbox y SSH se abren con el puente local. Web abre el navegador y copia la contraseña.
         El navegador no puede rellenar automáticamente el formulario de WebFig por seguridad.
       </div>
       <div>
-        <Button size="sm" variant="ghost" onClick={() => void downloadBridge()}><Download size={13} /> Instalar puente Winbox</Button>
+        <Button size="sm" variant="ghost" onClick={() => void downloadBridge()}><Download size={13} /> Instalar o actualizar puente</Button>
       </div>
 
-      {winboxHint && (
+      {bridgeKind && (
         <div className="access-hint">
-          Si el navegador no abrió Winbox, instala el puente y usa{' '}
-          <a href={winboxUrl} className="tool-link">abrir Winbox ahora</a>.
+          Si no se abrió {bridgeKind === 'ssh' ? 'SSH' : 'Winbox'}, instala el puente y usa{' '}
+          <a href={bridgeUrl} className="tool-link">abrir {bridgeKind === 'ssh' ? 'SSH' : 'Winbox'} ahora</a>.
           <Button size="sm" variant="secondary" onClick={() => void downloadBridge()}><Download size={13} /> Descargar puente</Button>
         </div>
       )}
-      {winboxError && <div className="form-error">{winboxError}</div>}
+      {bridgeError && <div className="form-error">{bridgeError}</div>}
       {error && <div className="form-error">{error}</div>}
       {notice && <div className="access-notice"><Check size={13} /> {notice}</div>}
 

@@ -431,7 +431,7 @@ La especificación OpenAPI está disponible en `/api/v1/openapi.json` con el sta
 Cada equipo tiene una sección **Accesos** con credenciales independientes para **Winbox**, **Web/HTTP** y **SSH**. Si un servicio no tiene credencial propia, se reutiliza la credencial RouterOS asignada al equipo. Las contraseñas se cifran en reposo y no se devuelven en los listados.
 
 - **Winbox**: abre Winbox con el usuario y la contraseña guardados.
-- **SSH**: abre el cliente SSH del sistema con el usuario y puerto guardados; la contraseña se copia con el botón explícito.
+- **SSH**: el puente abre PuTTY con usuario y contraseña si está instalado; si no, abre OpenSSH y copia la contraseña al portapapeles.
 - **Web**: abre HTTP/HTTPS y copia la contraseña al portapapeles. Los navegadores no permiten rellenar automáticamente formularios como WebFig por seguridad; para autollenado real haría falta una extensión o un userscript.
 - **Copiar usuario/contraseña**: botones explícitos para usar la credencial en cualquier cliente.
 - La **API RouterOS** sigue usando la credencial RouterOS de la sección RouterOS.
@@ -444,7 +444,7 @@ En **Accesos → Winbox** puedes abrir Winbox con el usuario y la contraseña de
 2. Vuelve a NetMonitor y pulsa **Abrir Winbox**.
 3. Si cambias de dominio o de URL de NetMonitor, vuelve a instalar el puente para actualizar el servidor incrustado.
 
-El puente solo se instala en el puesto cliente; no se ejecuta nada en el servidor. Usa HTTPS si el panel es accesible desde fuera de la red local, porque el puente recibe la credencial RouterOS en esa conexión.
+El puente solo se instala en el puesto cliente; no se ejecuta nada en el servidor. Usa HTTPS si el panel es accesible desde fuera de la red local, porque el puente recibe la credencial RouterOS en esa conexión. Si Winbox o SSH no se abren, revisa el diagnóstico en `%LOCALAPPDATA%\NetMonitor\bridge.log`.
 
 ## Seguridad
 
