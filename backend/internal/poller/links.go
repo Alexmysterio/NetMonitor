@@ -55,7 +55,7 @@ func (p *Poller) pollLinks(ctx context.Context) {
 		       COALESCE(sp.v3_auth_pass,''), COALESCE(sp.v3_priv_protocol,''), COALESCE(sp.v3_priv_pass,'')
 		FROM map_links l
 		JOIN devices d ON d.id = l.master_device_id
-		LEFT JOIN snmp_profiles sp ON sp.id = d.snmp_profile_id
+		JOIN snmp_profiles sp ON sp.id = d.snmp_profile_id
 		WHERE l.mastering_type='snmp' AND l.snmp_if_index IS NOT NULL AND d.is_monitoring_enabled=TRUE
 	`)
 	if err != nil {

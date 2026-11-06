@@ -102,3 +102,71 @@ func TestDudeLinkHasMasterInterface(t *testing.T) {
 		})
 	}
 }
+
+func TestDudeLinkMonitoringWithSNMPProfile(t *testing.T) {
+	const (
+		deviceWithProfile    = "11111111-1111-4111-8111-111111111111"
+		deviceWithoutProfile = "22222222-2222-4222-8222-222222222222"
+	)
+	deviceIDs := map[string]string{
+		"device-with-profile":    deviceWithProfile,
+		"device-without-profile": deviceWithoutProfile,
+	}
+	snmpDeviceIDs := map[string]bool{deviceWithProfile: true}
+
+	tests := []struct {
+		name           string
+		link           dude.Link
+		enabled        bool
+		wantMastering  string
+		wantDeviceID   string
+		wantIfIndex    int
+		wantDowngraded bool
+	}{
+		{
+			name:          "snmp master with profile is monitored",
+			link:          dude.Link{MasterDevice: "device-with-profile", MasterInterface: 7},
+			enabled:       true,
+			wantMastering: "snmp",
+			wantDeviceID:  deviceWithProfile,
+			wantIfIndex:   7,
+		},
+		{
+			name:           "snmp master without profile is downgraded",
+			link:           dude.Link{MasterDevice: "device-without-profile", MasterInterface: 8},
+			enabled:        true,
+			wantMastering:  "simple",
+			wantDowngraded: true,
+		},
+		{
+			name:          "disabled link is not downgraded",
+			link:          dude.Link{MasterDevice: "device-with-profile", MasterInterface: 7},
+			enabled:       false,
+			wantMastering: "simple",
+		},
+		{
+			name:          "link without interface is not downgraded",
+			link:          dude.Link{MasterDevice: "device-with-profile"},
+			enabled:       true,
+			wantMastering: "simple",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mastering, deviceID, ifIndex, downgraded := dudeLinkMonitoringWithSNMPProfile(tt.link, deviceIDs, snmpDeviceIDs, tt.enabled)
+			if mastering != tt.wantMastering {
+				t.Fatalf("mastering = %q, want %q", mastering, tt.wantMastering)
+			}
+			if deviceID != tt.wantDeviceID {
+				t.Fatalf("deviceID = %q, want %q", deviceID, tt.wantDeviceID)
+			}
+			if ifIndex != tt.wantIfIndex {
+				t.Fatalf("ifIndex = %d, want %d", ifIndex, tt.wantIfIndex)
+			}
+			if downgraded != tt.wantDowngraded {
+				t.Fatalf("downgraded = %v, want %v", downgraded, tt.wantDowngraded)
+			}
+		})
+	}
+}

@@ -175,7 +175,10 @@ type dudeApplyRequest struct {
 
 func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	var req dudeApplyRequest
-	_ = decodeBody(r, &req)
+	if err := decodeBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "cuerpo inválido")
+		return
+	}
 	importCredentials := true
 	if req.ImportCredentials != nil {
 		importCredentials = *req.ImportCredentials
@@ -603,6 +606,34 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	snmpDeviceIDs := map[string]bool{}
+	if len(deviceIDs) > 0 {
+		ids := make([]string, 0, len(deviceIDs))
+		for _, id := range deviceIDs {
+			ids = append(ids, id)
+		}
+		ids = uniqueStrings(ids)
+		rows, err := tx.Query(ctx, `
+			SELECT id::text FROM devices
+			WHERE id = ANY($1::uuid[]) AND snmp_profile_id IS NOT NULL
+		`, ids)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				snmpDeviceIDs[id] = true
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
 	sourceParent := map[string]string{}
 	for _, m := range preview.Maps {
 		if m.ParentSourceID != "" {
@@ -744,7 +775,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		warnings = append(warnings, credentialWarnings...)
 	}
 
-	createdLinks, skippedLinks, monitoredLinks, missingLinkMasters := 0, 0, 0, 0
+	createdLinks, skippedLinks, monitoredLinks, missingLinkMasters, missingSNMPMasters := 0, 0, 0, 0, 0
 	if createLinks {
 		// Reuse only links between map elements that belong to this import.
 		seenLinks := map[string]bool{}
@@ -803,7 +834,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			if speed <= 0 {
 				speed = 1000000000
 			}
-			mastering, masterDeviceID, ifIndex := dudeLinkMonitoring(l, deviceIDs, assignLinkMonitoring)
+			mastering, masterDeviceID, ifIndex, downgraded := dudeLinkMonitoringWithSNMPProfile(l, deviceIDs, snmpDeviceIDs, assignLinkMonitoring)
 			var masterArg any
 			if masterDeviceID != "" {
 				masterArg = masterDeviceID
@@ -824,8 +855,14 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 				if assignLinkMonitoring && dudeLinkHasMasterInterface(l) && l.MasterDevice != "" && deviceIDs[l.MasterDevice] == "" {
 					missingLinkMasters++
 				}
+				if downgraded {
+					missingSNMPMasters++
+				}
 			}
 		}
+	}
+	if missingSNMPMasters > 0 {
+		warnings = append(warnings, fmt.Sprintf("Enlaces con interfaz maestra pero sin perfil SNMP en el equipo maestro: %d. Se crearon como enlaces simples.", missingSNMPMasters))
 	}
 	if missingLinkMasters > 0 {
 		warnings = append(warnings, fmt.Sprintf("Enlaces con interfaz maestra sin dispositivo importado: %d. Se crearon como enlaces simples.", missingLinkMasters))
@@ -886,6 +923,14 @@ func dudeLinkMonitoring(link dude.Link, deviceIDs map[string]string, enabled boo
 		return
 	}
 	return "snmp", deviceID, link.MasterInterface
+}
+
+func dudeLinkMonitoringWithSNMPProfile(link dude.Link, deviceIDs map[string]string, snmpDeviceIDs map[string]bool, enabled bool) (mastering, masterDeviceID string, ifIndex int, downgraded bool) {
+	mastering, masterDeviceID, ifIndex = dudeLinkMonitoring(link, deviceIDs, enabled)
+	if mastering != "snmp" || snmpDeviceIDs[masterDeviceID] {
+		return
+	}
+	return "simple", "", 0, true
 }
 
 func dudePlural(n int, singular, plural string) string {
