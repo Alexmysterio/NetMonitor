@@ -188,8 +188,6 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	if req.AssignLinkMonitoring != nil {
 		assignLinkMonitoring = *req.AssignLinkMonitoring
 	}
-	// Used by the link-monitoring import step.
-	_ = assignLinkMonitoring
 	ctx := r.Context()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -740,7 +738,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		warnings = append(warnings, credentialWarnings...)
 	}
 
-	createdLinks, skippedLinks := 0, 0
+	createdLinks, skippedLinks, monitoredLinks, missingLinkMasters := 0, 0, 0, 0
 	if createLinks {
 		// Reuse only links between map elements that belong to this import.
 		seenLinks := map[string]bool{}
@@ -799,14 +797,32 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			if speed <= 0 {
 				speed = 1000000000
 			}
+			mastering, masterDeviceID, ifIndex := dudeLinkMonitoring(l, deviceIDs, assignLinkMonitoring)
+			var masterArg any
+			if masterDeviceID != "" {
+				masterArg = masterDeviceID
+			}
+			var ifArg any
+			if ifIndex > 0 {
+				ifArg = ifIndex
+			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO map_links (map_id, source_element_id, target_element_id, source_handle,
-				 target_handle, link_type, max_speed_bps, label_template)
-				VALUES ($1,$2,$3,'center','center',$4,$5,'')
-			`, mapID, aElem, bElem, l.LinkType, speed); err == nil {
+				 target_handle, mastering_type, master_device_id, snmp_if_index, link_type, max_speed_bps, label_template)
+				VALUES ($1,$2,$3,'center','center',$4,$5,$6,$7,$8,'')
+			`, mapID, aElem, bElem, mastering, masterArg, ifArg, l.LinkType, speed); err == nil {
 				createdLinks++
+				if mastering == "snmp" {
+					monitoredLinks++
+				}
+				if assignLinkMonitoring && l.MasterInterface > 0 && l.MasterDevice != "" && deviceIDs[l.MasterDevice] == "" {
+					missingLinkMasters++
+				}
 			}
 		}
+	}
+	if missingLinkMasters > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d enlaces tenían interfaz maestra pero su dispositivo no se importó; se crearon como enlaces simples.", missingLinkMasters))
 	}
 	if skippedLinks > 0 {
 		warnings = append(warnings, fmt.Sprintf("%d enlaces no se pudieron crear porque uno de sus extremos no es un dispositivo ni un elemento decorativo importable.", skippedLinks))
@@ -814,7 +830,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	result, _ := json.Marshal(map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
 		"created_decorations": createdDecorations, "created_submaps": createdSubmaps,
-		"created_links": createdLinks, "skipped_links": skippedLinks,
+		"created_links": createdLinks, "skipped_links": skippedLinks, "links_monitored": monitoredLinks,
 		"snmp_profiles_created": snmpProfilesCreated, "snmp_profiles_reused": snmpProfilesReused,
 		"snmp_assigned": snmpAssigned, "snmp_skipped": snmpSkipped,
 		"routeros_credentials_created": createdCredentials, "routeros_credentials_reused": reusedCredentials,
@@ -836,7 +852,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
-		"created_links": createdLinks, "skipped_links": skippedLinks,
+		"created_links": createdLinks, "skipped_links": skippedLinks, "links_monitored": monitoredLinks,
 		"created_decorations": createdDecorations, "created_submaps": createdSubmaps,
 		"snmp_profiles_created": snmpProfilesCreated, "snmp_profiles_reused": snmpProfilesReused,
 		"snmp_assigned": snmpAssigned, "snmp_skipped": snmpSkipped,
@@ -846,6 +862,18 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs, "by": uid.Username,
 	}})
+}
+
+func dudeLinkMonitoring(link dude.Link, deviceIDs map[string]string, enabled bool) (mastering, masterDeviceID string, ifIndex int) {
+	mastering = "simple"
+	if !enabled || link.MasterInterface <= 0 || int64(link.MasterInterface) >= 0xffffffff || link.MasterDevice == "" {
+		return
+	}
+	deviceID := deviceIDs[link.MasterDevice]
+	if deviceID == "" {
+		return
+	}
+	return "snmp", deviceID, link.MasterInterface
 }
 
 func resolveDudeAddress(raw string) string {
