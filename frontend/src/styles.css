@@ -1212,12 +1212,20 @@ body.noc-flash { animation: nocFlash .6s ease-in-out 3; }
   align-items: center;
   gap: 8px;
   font-size: 13px;
+  cursor: pointer;
 }
 .device-import-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 4px;
+}
+.device-import-badges .cred-pill {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .target-picker label .device-import-badges {
   flex-direction: row;

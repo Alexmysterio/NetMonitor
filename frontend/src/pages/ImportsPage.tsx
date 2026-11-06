@@ -248,7 +248,7 @@ export default function ImportsPage() {
         )}
       </div>
 
-      <div className="warning-box"><AlertTriangle size={16} /><div><b>Credenciales opcionales</b><span>Las credenciales RouterOS y los perfiles SNMP son opcionales. Si los importas, se guardan cifrados en reposo y nunca se muestran en la interfaz; los secretos SNMPv3 pueden requerir completarse manualmente.</span></div></div>
+      <div className="warning-box"><AlertTriangle size={16} /><div><b>Credenciales opcionales</b><span>Las credenciales RouterOS y los perfiles SNMP son opcionales. Las contraseñas y communities no se muestran en la interfaz; se guardan cifradas. Los secretos SNMPv3 pueden requerir completarse manualmente.</span></div></div>
 
       <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="Preview de importación" subtitle={preview ? `${preview.filename} · ${preview.source_kind}` : ''} width={960} footer={<><Button variant="ghost" onClick={() => setPreviewOpen(false)}>Cerrar</Button>{result ? (firstMapID && <Button variant="primary" onClick={() => navigate(`/maps/${firstMapID}`)}><MapIcon size={14} /> Abrir mapa importado</Button>) : <Button variant="primary" onClick={() => void apply()} disabled={busy || !selectedMaps.length || !selectedDevices.length}>{busy ? 'Importando…' : 'Aplicar importación'}</Button>}</>}>
         {preview && <>
@@ -269,15 +269,15 @@ export default function ImportsPage() {
             <div className="import-options">
               <label><input type="checkbox" checked={importCredentials} onChange={e => setImportCredentials(e.target.checked)} /> Importar credenciales RouterOS</label>
               <label><input type="checkbox" checked={importSNMP} onChange={e => setImportSNMP(e.target.checked)} /> Importar perfiles SNMP</label>
-              <label><input type="checkbox" checked={overwriteCredentials} onChange={e => setOverwriteCredentials(e.target.checked)} /> Sobrescribir credenciales existentes</label>
-              <label><input type="checkbox" checked={assignLinkMonitoring} onChange={e => setAssignLinkMonitoring(e.target.checked)} /> Monitorizar enlaces con interfaz</label>
+              <label><input type="checkbox" checked={overwriteCredentials} onChange={e => setOverwriteCredentials(e.target.checked)} disabled={!importCredentials} /> Sobrescribir credenciales RouterOS existentes</label>
+              <label><input type="checkbox" checked={assignLinkMonitoring} onChange={e => setAssignLinkMonitoring(e.target.checked)} disabled={!createLinks} /> Monitorizar enlaces con interfaz</label>
             </div>
           )}
           {!result && (
             <div className="check-row">
               <label><input type="checkbox" checked={createLinks} onChange={e => setCreateLinks(e.target.checked)} /> Crear enlaces entre dispositivos importados</label>
-              {createLinks && monitoredLinks > 0 && (
-                <span className="muted small">Se detectaron {monitoredLinks} enlaces con interfaz maestra para monitorización SNMP.</span>
+              {createLinks && assignLinkMonitoring && monitoredLinks > 0 && (
+                <span className="muted small">El archivo contiene {monitoredLinks} enlaces con interfaz maestra.</span>
               )}
             </div>
           )}
@@ -314,7 +314,7 @@ export default function ImportsPage() {
               <div className="snmp-assign-head">
                 <div>
                   <h4 className="section-mini-title"><KeyRound size={14} /> Perfil SNMP <span>{assignedSNMP} asignados</span></h4>
-                  <span className="muted small">Opcional. Los perfiles de Dude se importan automáticamente; usa este selector solo para sustituirlos en los equipos seleccionados.</span>
+                  <span className="muted small">Los perfiles SNMP de Dude se asignan automáticamente si activas su importación; usa este selector para sustituirlos.</span>
                 </div>
                 {snmpProfiles.length > 0 && (
                   <div className="snmp-bulk">
@@ -401,7 +401,17 @@ export default function ImportsPage() {
               </div>
             </div>
           )}
-          {result && <div className="notice-ok"><CheckCircle2 size={15} /><div><b>Importación completada</b><span>{String(result.created_maps ?? 0)} mapas, {String(result.created_devices ?? 0)} equipos nuevos, {String(result.reused_devices ?? 0)} reutilizados, {String(result.device_types_assigned ?? 0)} con tipo asignado, {String(result.routeros_credentials_assigned ?? 0)} equipos con credenciales ({String(result.routeros_credentials_created ?? 0)} creadas, {String(result.routeros_credentials_reused ?? 0)} reutilizadas), {String(result.snmp_profiles_created ?? 0)} perfiles SNMP creados ({String(result.snmp_profiles_reused ?? 0)} reutilizados), {String(result.snmp_assigned ?? 0)} con perfil SNMP, {String(result.probes_added ?? 0)} sondas añadidas, {String(result.created_submaps ?? 0)} submapas, {String(result.created_decorations ?? 0)} decoraciones, {String(result.created_links ?? 0)} enlaces ({String(result.links_monitored ?? 0)} monitorizados){Number(result.skipped_links ?? 0) > 0 ? ` (${String(result.skipped_links)} omitidos)` : ''}.</span>{Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}</div></div>}
+          {result && (
+            <div className="notice-ok">
+              <CheckCircle2 size={15} />
+              <div>
+                <b>Importación completada</b>
+                <span>{String(result.created_maps ?? 0)} mapas · {String(result.created_devices ?? 0)} equipos nuevos · {String(result.reused_devices ?? 0)} reutilizados · {String(result.device_types_assigned ?? 0)} con tipo · {String(result.probes_added ?? 0)} sondas · {String(result.created_submaps ?? 0)} submapas · {String(result.created_decorations ?? 0)} decoraciones.</span>
+                <span>{String(result.created_links ?? 0)} enlaces · {String(result.links_monitored ?? 0)} monitorizados · {String(result.skipped_links ?? 0)} omitidos · {String(result.routeros_credentials_assigned ?? 0)} equipos con credenciales · {String(result.snmp_assigned ?? 0)} con perfil SNMP · {String(result.snmp_profiles_created ?? 0)} perfiles SNMP creados.</span>
+                {Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}
+              </div>
+            </div>
+          )}
         </>}
       </Modal>
     </div>
