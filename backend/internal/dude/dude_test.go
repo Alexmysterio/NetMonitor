@@ -145,7 +145,7 @@ func TestParseSQLiteCredentialsAndSNMP(t *testing.T) {
 		t.Fatalf("unexpected source-ID SNMP resolution: %+v", router)
 	}
 	switchDevice := devices["d2"]
-	if switchDevice.SNMPProfileSourceID != "Shared" || switchDevice.SNMPProfileName != "Shared" {
+	if switchDevice.SNMPProfileSourceID != "p1" || switchDevice.SNMPProfileName != "Shared" {
 		t.Fatalf("unexpected name SNMP resolution: %+v", switchDevice)
 	}
 	if len(p.Links) != 1 {
@@ -167,6 +167,9 @@ func TestParseXMLCredentialsAndSNMP(t *testing.T) {
     <username> admin </username>
     <password> secret </password>
     <snmp_profile id="60"/>
+  </device>
+  <device id="d2" name="Switch" address="10.0.0.2">
+    <snmp_profile>v2-public</snmp_profile>
   </device>
   <link id="l1" device1="d1" device2="d2" mastering_type="2">
     <master_device>d1</master_device>
@@ -194,7 +197,7 @@ func TestParseXMLCredentialsAndSNMP(t *testing.T) {
 		profile.Community != " public " || !profile.HasCommunity {
 		t.Fatalf("unexpected XML SNMP profile: %+v", profile)
 	}
-	if len(p.Devices) != 1 {
+	if len(p.Devices) != 2 {
 		t.Fatalf("unexpected devices: %+v", p.Devices)
 	}
 	d := p.Devices[0]
@@ -203,6 +206,10 @@ func TestParseXMLCredentialsAndSNMP(t *testing.T) {
 	}
 	if d.SNMPProfileSourceID != "60" || d.SNMPProfileName != "v2-public" {
 		t.Fatalf("nested SNMP reference not resolved: %+v", d)
+	}
+	switchDevice := p.Devices[1]
+	if switchDevice.SNMPProfileSourceID != "60" || switchDevice.SNMPProfileName != "v2-public" {
+		t.Fatalf("name SNMP reference not normalized: %+v", switchDevice)
 	}
 	if len(p.Links) != 1 {
 		t.Fatalf("unexpected links: %+v", p.Links)

@@ -681,26 +681,28 @@ func normalizeSNMPVersion(raw string) string {
 
 func resolveSNMPProfileNames(devices []Device, profiles []SNMPProfile) {
 	for i := range devices {
-		ref := devices[i].SNMPProfileSourceID
+		ref := strings.TrimSpace(devices[i].SNMPProfileSourceID)
 		if ref == "" {
 			continue
 		}
-		found := false
-		for _, profile := range profiles {
-			if strings.EqualFold(profile.SourceID, ref) {
-				devices[i].SNMPProfileName = profile.Name
-				found = true
+		matched := -1
+		for j := range profiles {
+			if strings.EqualFold(profiles[j].SourceID, ref) {
+				matched = j
 				break
 			}
 		}
-		if found {
-			continue
-		}
-		for _, profile := range profiles {
-			if strings.EqualFold(profile.Name, ref) {
-				devices[i].SNMPProfileName = profile.Name
-				break
+		if matched < 0 {
+			for j := range profiles {
+				if strings.EqualFold(profiles[j].Name, ref) {
+					matched = j
+					break
+				}
 			}
+		}
+		if matched >= 0 {
+			devices[i].SNMPProfileSourceID = profiles[matched].SourceID
+			devices[i].SNMPProfileName = profiles[matched].Name
 		}
 	}
 }
