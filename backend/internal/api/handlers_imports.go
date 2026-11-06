@@ -49,9 +49,36 @@ func (s *Server) previewDudeImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	preview.Warnings = append(preview.Warnings,
-		"Las credenciales (usuario/contraseña/SNMP) de The Dude no se importan por seguridad; asígnalas después desde Inventario o RouterOS.")
+	routerCredentialDevices := 0
+	for _, d := range preview.Devices {
+		if d.Username != "" {
+			routerCredentialDevices++
+		}
+	}
+	if routerCredentialDevices > 0 {
+		preview.Warnings = append(preview.Warnings,
+			fmt.Sprintf("Se importarán credenciales RouterOS de %d equipos.", routerCredentialDevices))
+	}
+	if len(preview.SNMPProfiles) > 0 {
+		preview.Warnings = append(preview.Warnings,
+			fmt.Sprintf("Se detectaron %d perfiles SNMP de The Dude.", len(preview.SNMPProfiles)))
+	}
+	monitoredLinks := 0
+	for _, l := range preview.Links {
+		if l.MasterInterface > 0 && l.MasterDevice != "" {
+			monitoredLinks++
+		}
+	}
+	if monitoredLinks > 0 {
+		preview.Warnings = append(preview.Warnings,
+			fmt.Sprintf("Se asignará monitorización SNMP a %d enlaces.", monitoredLinks))
+	}
+	if err := encryptDudePreviewSecrets(&preview); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	payload, _ := json.Marshal(preview)
+	sanitizeDudePreview(&preview)
 	warnings, _ := json.Marshal(preview.Warnings)
 	uid, _ := auth.UserFrom(r.Context())
 	var id string
@@ -110,13 +137,20 @@ func (s *Server) getDudeImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "importación no encontrada")
 		return
 	}
-	var preview, warningsObj, resultObj any
-	_ = json.Unmarshal([]byte(payload), &preview)
+	var preview dude.Preview
+	var previewObj any
+	if err := json.Unmarshal([]byte(payload), &preview); err == nil {
+		sanitizeDudePreview(&preview)
+		previewObj = preview
+	} else {
+		_ = json.Unmarshal([]byte(payload), &previewObj)
+	}
+	var warningsObj, resultObj any
 	_ = json.Unmarshal([]byte(warnings), &warningsObj)
 	_ = json.Unmarshal([]byte(result), &resultObj)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"id": id, "filename": filename, "source_kind": kind, "status": status,
-		"preview": preview, "warnings": warningsObj, "result": resultObj,
+		"preview": previewObj, "warnings": warningsObj, "result": resultObj,
 		"created_at": created, "applied_at": applied,
 	}})
 }
@@ -157,6 +191,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "el preview guardado está dañado")
 		return
 	}
+	warnings := decryptDudePreviewSecrets(&preview)
 	uid, _ := auth.UserFrom(ctx)
 	createLinks := true
 	if req.CreateLinks != nil {
@@ -328,7 +363,6 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	deviceIDs := map[string]string{}
 	nodeElements := map[string]string{}
 	skipped := 0
-	var warnings []string
 	order := 0
 	for _, d := range preview.Devices {
 		if len(selectedDevices) > 0 && !selectedDevices[d.SourceID] {
