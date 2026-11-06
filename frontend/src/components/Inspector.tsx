@@ -31,6 +31,7 @@ import { Button, deviceTypeLabel, EmptyState, Field, formatBps, formatDuration, 
 import SnmpInfoModal from './SnmpInfoModal'
 import SnmpInfoSections from './SnmpInfoSections'
 import NodeIcon from './NodeIcon'
+import DeviceAccessButtons from './DeviceAccessButtons'
 import DeviceAccessPanel from './DeviceAccessPanel'
 import ToolsModal from './ToolsModal'
 import { confirmAction } from '../confirm'
@@ -528,6 +529,12 @@ function ElementInspector({
                 <button onClick={() => setWalkOpen(true)} disabled={!device?.snmp_profile_id} title={device?.snmp_profile_id ? 'Explorar OIDs' : 'Sin perfil SNMP'}><Radar size={14} /> SNMP Walk</button>
                 <button onClick={setMaintenance}><Clock3 size={14} /> Mantenimiento</button>
               </div>
+
+              <div className="section-label">Accesos rápidos</div>
+              <DeviceAccessButtons
+                deviceId={element.device_id}
+                host={device?.primary_ip || element.device?.primary_ip}
+              />
 
               <div className="section-label">Identidad</div>
               <KeyValue k="Dirección IP" v={element.device?.primary_ip || '—'} mono />

@@ -4,6 +4,7 @@ import { apiDownload, apiGet, apiSend } from '../api'
 import { confirmAction } from '../confirm'
 import type { DeviceCredentialKind, DeviceToolAccess } from '../types'
 import { Button, Field, Modal, Spinner } from '../ui'
+import DeviceAccessButtons from './DeviceAccessButtons'
 
 const KINDS: DeviceCredentialKind[] = ['winbox', 'web', 'ssh']
 
@@ -32,11 +33,6 @@ function sourceLabel(source?: string): string {
   return 'sin configurar'
 }
 
-function endpointHost(host: string): string {
-  if (host.includes(':') && !host.startsWith('[')) return `[${host}]`
-  return host
-}
-
 export default function DeviceAccessPanel({
   deviceId,
   deviceName,
@@ -51,11 +47,7 @@ export default function DeviceAccessPanel({
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<DeviceCredentialKind | null>(null)
   const [saving, setSaving] = useState(false)
-  const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
-  const [bridgeError, setBridgeError] = useState('')
-  const [bridgeKind, setBridgeKind] = useState<'' | 'winbox' | 'ssh'>('')
-  const [bridgeUrl, setBridgeUrl] = useState('')
   const [form, setForm] = useState({
     username: '', password: '', port: 0, use_tls: false, path: '', notes: '',
   })
@@ -76,9 +68,6 @@ export default function DeviceAccessPanel({
     setAccess([])
     setError('')
     setNotice('')
-    setBridgeError('')
-    setBridgeKind('')
-    setBridgeUrl('')
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId])
@@ -86,9 +75,6 @@ export default function DeviceAccessPanel({
   if (!deviceId) return null
 
   const entry = (kind: DeviceCredentialKind) => access.find(item => item.kind === kind)
-  const winbox = entry('winbox')
-  const web = entry('web')
-  const ssh = entry('ssh')
 
   const openEditor = (kind: DeviceCredentialKind) => {
     const current = entry(kind)
@@ -180,70 +166,12 @@ export default function DeviceAccessPanel({
     setNotice(`Usuario de ${KIND_LABEL[kind]} copiado.`)
   }
 
-  const openBridge = async (kind: 'winbox' | 'ssh') => {
-    if (!deviceId) return
-    setBusy(kind)
-    setBridgeError('')
-    setBridgeKind('')
-    setBridgeUrl('')
-    setNotice('')
-    try {
-      const data = await apiSend<{ url: string }>('/tools/winbox/ticket', 'POST', { device_id: deviceId, kind })
-      const ticket = data.url.replace(/^netmonitor-winbox:\/\//, '')
-      setBridgeUrl(data.url)
-      const controller = new AbortController()
-      const timeout = window.setTimeout(() => controller.abort(), 5000)
-      try {
-        const response = await fetch('http://127.0.0.1:47821/launch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ server: window.location.origin, ticket }),
-          signal: controller.signal,
-        })
-        window.clearTimeout(timeout)
-        if (response.ok) {
-          setNotice(kind === 'ssh' ? 'SSH lanzado.' : 'Winbox lanzado.')
-          return
-        }
-        let message = 'El puente no pudo abrir la aplicación.'
-        try {
-          const body = await response.json()
-          if (body?.error) message = String(body.error)
-        } catch {
-          /* keep generic message */
-        }
-        setBridgeError(message)
-        return
-      } catch {
-        // The local helper is not running/installed. Do not invoke the custom
-        // protocol automatically: browsers show a permission dialog for it.
-        setBridgeKind(kind)
-      } finally {
-        window.clearTimeout(timeout)
-      }
-    } catch (e) {
-      setBridgeError((e as Error).message)
-    } finally {
-      setBusy('')
-    }
-  }
-
-  const openWeb = async () => {
-    if (!host) return
-    const tls = !!web?.use_tls
-    const port = web?.port || (tls ? 443 : 80)
-    const path = web?.path || '/'
-    const portPart = port === (tls ? 443 : 80) ? '' : `:${port}`
-    window.open(`${tls ? 'https' : 'http'}://${endpointHost(host)}${portPart}${path}`, '_blank', 'noopener,noreferrer')
-    if (web && web.source !== 'none') void copyPassword('web')
-  }
-
   const downloadBridge = async () => {
-    setBridgeError('')
+    setError('')
     try {
       await apiDownload('/tools/winbox/bridge', 'netmonitor-bridge-installer.vbs')
     } catch (e) {
-      setBridgeError((e as Error).message)
+      setError((e as Error).message)
     }
   }
 
@@ -256,17 +184,7 @@ export default function DeviceAccessPanel({
 
   return (
     <div className="access-panel">
-      <div className="access-toolbar">
-        <Button size="sm" variant="primary" onClick={() => void openBridge('winbox')} disabled={!winbox || winbox.source === 'none' || busy === 'winbox'}>
-          <Monitor size={14} /> {busy === 'winbox' ? 'Preparando…' : 'Winbox'}
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => void openBridge('ssh')} disabled={!ssh?.username || busy === 'ssh'}>
-          <Terminal size={14} /> {busy === 'ssh' ? 'Preparando…' : 'SSH'}
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => void openWeb()} disabled={!host}>
-          <Globe size={14} /> Web
-        </Button>
-      </div>
+      <DeviceAccessButtons deviceId={deviceId} host={host} access={access} />
 
       <div className="access-note">
         Winbox y SSH se abren con el puente local. Web abre el navegador y copia la contraseña.
@@ -276,14 +194,6 @@ export default function DeviceAccessPanel({
         <Button size="sm" variant="ghost" onClick={() => void downloadBridge()}><Download size={13} /> Instalar o actualizar puente</Button>
       </div>
 
-      {bridgeKind && (
-        <div className="access-hint">
-          El puente local no está activo. Instálalo para abrir {bridgeKind === 'ssh' ? 'SSH' : 'Winbox'} sin permisos del navegador.
-          <a href={bridgeUrl} className="tool-link">Usar el protocolo (puede pedir permiso)</a>
-          <Button size="sm" variant="secondary" onClick={() => void downloadBridge()}><Download size={13} /> Instalar puente</Button>
-        </div>
-      )}
-      {bridgeError && <div className="form-error">{bridgeError}</div>}
       {error && <div className="form-error">{error}</div>}
       {notice && <div className="access-notice"><Check size={13} /> {notice}</div>}
 

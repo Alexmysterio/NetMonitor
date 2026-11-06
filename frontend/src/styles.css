@@ -893,6 +893,7 @@ body.noc-mode .canvas-legend { bottom: 76px; }
 .tool-links { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
 .tool-link { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: #2563eb; background: #f8faff; border: 1px solid #dbeafe; border-radius: 7px; padding: 5px 8px; text-decoration: none; }
 .tool-link:hover { background: #eef4ff; }
+.device-access-buttons { display: flex; flex-direction: column; gap: 6px; }
 .access-panel { display: flex; flex-direction: column; gap: 8px; }
 .access-toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
 .access-note { font-size: 10px; color: #64748b; line-height: 1.5; }
