@@ -36,19 +36,42 @@ const (
 )
 
 var (
-	user32               = windows.NewLazySystemDLL("user32.dll")
-	kernel32             = windows.NewLazySystemDLL("kernel32.dll")
-	procMessageBoxW      = user32.NewProc("MessageBoxW")
-	procOpenClipboard    = user32.NewProc("OpenClipboard")
-	procEmptyClipboard   = user32.NewProc("EmptyClipboard")
-	procSetClipboardData = user32.NewProc("SetClipboardData")
-	procCloseClipboard   = user32.NewProc("CloseClipboard")
-	procGlobalAlloc      = kernel32.NewProc("GlobalAlloc")
-	procGlobalLock       = kernel32.NewProc("GlobalLock")
-	procGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
-	procGlobalFree       = kernel32.NewProc("GlobalFree")
-	procRtlMoveMemory    = kernel32.NewProc("RtlMoveMemory")
+	user32                       = windows.NewLazySystemDLL("user32.dll")
+	kernel32                     = windows.NewLazySystemDLL("kernel32.dll")
+	procMessageBoxW              = user32.NewProc("MessageBoxW")
+	procOpenClipboard            = user32.NewProc("OpenClipboard")
+	procEmptyClipboard           = user32.NewProc("EmptyClipboard")
+	procSetClipboardData         = user32.NewProc("SetClipboardData")
+	procCloseClipboard           = user32.NewProc("CloseClipboard")
+	procGlobalAlloc              = kernel32.NewProc("GlobalAlloc")
+	procGlobalLock               = kernel32.NewProc("GlobalLock")
+	procGlobalUnlock             = kernel32.NewProc("GlobalUnlock")
+	procGlobalFree               = kernel32.NewProc("GlobalFree")
+	procRtlMoveMemory            = kernel32.NewProc("RtlMoveMemory")
+	procEnumWindows              = user32.NewProc("EnumWindows")
+	procGetWindowThreadProcessID = user32.NewProc("GetWindowThreadProcessId")
+	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
+	procGetWindow                = user32.NewProc("GetWindow")
+	procGetWindowTextLengthW     = user32.NewProc("GetWindowTextLengthW")
+	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
+	procShowWindow               = user32.NewProc("ShowWindow")
+	procBringWindowToTop         = user32.NewProc("BringWindowToTop")
+	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
+	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
+	procAttachThreadInput        = user32.NewProc("AttachThreadInput")
+	procSwitchToThisWindow       = user32.NewProc("SwitchToThisWindow")
+	procAllowSetForegroundWindow = user32.NewProc("AllowSetForegroundWindow")
+	procAttachConsole            = kernel32.NewProc("AttachConsole")
+	procFreeConsole              = kernel32.NewProc("FreeConsole")
+	procGetConsoleWindow         = kernel32.NewProc("GetConsoleWindow")
+	procGetCurrentThreadID       = kernel32.NewProc("GetCurrentThreadId")
+	procKeybdEvent               = user32.NewProc("keybd_event")
+	procSetWindowPos             = user32.NewProc("SetWindowPos")
+	procSetFocus                 = user32.NewProc("SetFocus")
+	procSetActiveWindow          = user32.NewProc("SetActiveWindow")
 )
+
+var backgroundMode bool
 
 type redeemData struct {
 	Kind       string `json:"kind"`
@@ -76,6 +99,150 @@ func messageBox(title, text string, flags uint32) {
 	t, _ := syscall.UTF16PtrFromString(text)
 	c, _ := syscall.UTF16PtrFromString(title)
 	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(c)), uintptr(flags))
+}
+
+func windowTitle(hwnd uintptr) string {
+	length, _, _ := procGetWindowTextLengthW.Call(hwnd)
+	if length == 0 {
+		return ""
+	}
+	buffer := make([]uint16, length+1)
+	procGetWindowTextW.Call(hwnd, uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)))
+	return syscall.UTF16ToString(buffer)
+}
+
+func tryActivate(hwnd uintptr) {
+	currentThread, _, _ := procGetCurrentThreadID.Call()
+	foreground, _, _ := procGetForegroundWindow.Call()
+	var foregroundPID, targetPID uint32
+	foregroundThread, _, _ := procGetWindowThreadProcessID.Call(foreground, uintptr(unsafe.Pointer(&foregroundPID)))
+	targetThread, _, _ := procGetWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&targetPID)))
+	attachedForeground := false
+	attachedTarget := false
+	if currentThread != 0 && foregroundThread != 0 && currentThread != foregroundThread {
+		if ok, _, _ := procAttachThreadInput.Call(currentThread, foregroundThread, 1); ok != 0 {
+			attachedForeground = true
+		}
+	}
+	if currentThread != 0 && targetThread != 0 && currentThread != targetThread {
+		if ok, _, _ := procAttachThreadInput.Call(currentThread, targetThread, 1); ok != 0 {
+			attachedTarget = true
+		}
+	}
+	procSetForegroundWindow.Call(hwnd)
+	procSetFocus.Call(hwnd)
+	procSetActiveWindow.Call(hwnd)
+	if attachedTarget {
+		procAttachThreadInput.Call(currentThread, targetThread, 0)
+	}
+	if attachedForeground {
+		procAttachThreadInput.Call(currentThread, foregroundThread, 0)
+	}
+}
+
+func focusWindow(hwnd uintptr) {
+	if hwnd == 0 {
+		return
+	}
+	title := windowTitle(hwnd)
+	procShowWindow.Call(hwnd, 9) // SW_RESTORE
+	procBringWindowToTop.Call(hwnd)
+	procAllowSetForegroundWindow.Call(0xFFFFFFFF) // ASFW_ANY
+	// A synthesized Alt keypress releases the foreground lock in many Windows
+	// configurations, allowing a background helper to activate the new window.
+	procKeybdEvent.Call(0x12, 0, 0, 0)                                         // VK_MENU down
+	procKeybdEvent.Call(0x12, 0, 0x0002, 0)                                    // KEYEVENTF_KEYUP
+	procSetWindowPos.Call(hwnd, ^uintptr(0), 0, 0, 0, 0, 0x0001|0x0002|0x0040) // HWND_TOPMOST
+	tryActivate(hwnd)
+	current, _, _ := procGetForegroundWindow.Call()
+	if current == hwnd {
+		procSetWindowPos.Call(hwnd, ^uintptr(1), 0, 0, 0, 0, 0x0001|0x0002) // HWND_NOTOPMOST
+		logf("focus hwnd=%d title=%q ok=true", hwnd, title)
+		return
+	}
+
+	tryActivate(hwnd)
+	if current, _, _ = procGetForegroundWindow.Call(); current == hwnd {
+		procSetWindowPos.Call(hwnd, ^uintptr(1), 0, 0, 0, 0, 0x0001|0x0002)
+		logf("focus hwnd=%d title=%q ok=true", hwnd, title)
+		return
+	}
+
+	procSwitchToThisWindow.Call(hwnd, 1)
+	// Keep the window above the browser for a moment even if Windows denies
+	// keyboard focus to a background helper. The user can click it directly.
+	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, 0x0001|0x0002|0x0040) // HWND_TOP
+	time.Sleep(1200 * time.Millisecond)
+	procSetWindowPos.Call(hwnd, ^uintptr(1), 0, 0, 0, 0, 0x0001|0x0002)
+	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, 0x0001|0x0002) // keep it at the top of normal windows
+	current, _, _ = procGetForegroundWindow.Call()
+	logf("focus hwnd=%d title=%q foreground=%d ok=%v", hwnd, title, current, current == hwnd)
+}
+
+func focusProcessWindow(pid int, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var found uintptr
+		callback := windows.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+			var windowPID uint32
+			procGetWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&windowPID)))
+			if int(windowPID) != pid {
+				return 1
+			}
+			visible, _, _ := procIsWindowVisible.Call(hwnd)
+			if visible == 0 {
+				return 1
+			}
+			owner, _, _ := procGetWindow.Call(hwnd, 4) // GW_OWNER
+			if owner != 0 || windowTitle(hwnd) == "" {
+				return 1
+			}
+			found = hwnd
+			return 0
+		})
+		procEnumWindows.Call(callback, 0)
+		if found != 0 {
+			logf("focus window pid=%d hwnd=%d title=%q", pid, found, windowTitle(found))
+			focusWindow(found)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func focusConsoleWindow(pid int, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if ok, _, _ := procAttachConsole.Call(uintptr(pid)); ok != 0 {
+			hwnd, _, _ := procGetConsoleWindow.Call()
+			procFreeConsole.Call()
+			if hwnd != 0 {
+				focusWindow(hwnd)
+				return
+			}
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+}
+
+func startAndFocus(cmd *exec.Cmd, console bool) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	pid := cmd.Process.Pid
+	focus := func() {
+		if console {
+			focusConsoleWindow(pid, 4*time.Second)
+		} else {
+			focusProcessWindow(pid, 6*time.Second)
+		}
+	}
+	if backgroundMode {
+		go focus()
+	} else {
+		focus()
+	}
+	return nil
 }
 
 func setClipboard(text string) error {
@@ -330,7 +497,7 @@ func launchWinbox(data redeemData) error {
 		args = append(args, data.Password)
 	}
 	logf("winbox path=%s args=%v", exe, redacted(args, data.Password))
-	return exec.Command(exe, args...).Start()
+	return startAndFocus(exec.Command(exe, args...), false)
 }
 
 func launchSSH(data redeemData) error {
@@ -341,7 +508,7 @@ func launchSSH(data redeemData) error {
 	if putty := findPutty(); putty != "" {
 		args := []string{"-ssh", "-P", strconv.Itoa(port), "-l", data.Username, "-pw", data.Password, data.Address}
 		logf("ssh path=%s args=%v", putty, redacted(args, data.Password))
-		return exec.Command(putty, args...).Start()
+		return startAndFocus(exec.Command(putty, args...), false)
 	}
 	ssh := findSSH()
 	if ssh == "" {
@@ -352,16 +519,12 @@ func launchSSH(data redeemData) error {
 	cmd := exec.Command(ssh, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewConsole}
 	logf("ssh path=%s args=%v", ssh, args)
-	if err := cmd.Start(); err != nil {
+	if err := startAndFocus(cmd, true); err != nil {
 		return err
 	}
-	message := "No se encontró PuTTY. Se abrió OpenSSH."
-	if clipErr == nil {
-		message += " La contraseña está en el portapapeles; pégala cuando se solicite."
-	} else {
-		message += " No se pudo copiar la contraseña al portapapeles."
+	if clipErr != nil {
+		logf("ssh clipboard error: %v", clipErr)
 	}
-	messageBox("NetMonitor - SSH", message, mbOK|mbIconInfo)
 	return nil
 }
 
@@ -442,6 +605,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func serve() {
+	backgroundMode = true
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		cors(w)
