@@ -59,11 +59,13 @@ func (s *Server) previewDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if routerCredentialDevices > 0 {
 		preview.Warnings = append(preview.Warnings,
-			fmt.Sprintf("Se importarán credenciales RouterOS de %d equipos.", routerCredentialDevices))
+			fmt.Sprintf("Se importarán credenciales RouterOS de %d %s.",
+				routerCredentialDevices, dudePlural(routerCredentialDevices, "equipo", "equipos")))
 	}
 	if len(preview.SNMPProfiles) > 0 {
 		preview.Warnings = append(preview.Warnings,
-			fmt.Sprintf("Se detectaron %d perfiles SNMP de The Dude.", len(preview.SNMPProfiles)))
+			fmt.Sprintf("Se detectaron %d %s SNMP de The Dude.",
+				len(preview.SNMPProfiles), dudePlural(len(preview.SNMPProfiles), "perfil", "perfiles")))
 	}
 	monitoredLinks := 0
 	for _, l := range preview.Links {
@@ -73,7 +75,8 @@ func (s *Server) previewDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if monitoredLinks > 0 {
 		preview.Warnings = append(preview.Warnings,
-			fmt.Sprintf("Se detectaron %d enlaces con interfaz maestra para monitorización SNMP.", monitoredLinks))
+			fmt.Sprintf("Se detectaron %d %s con interfaz maestra para monitorización SNMP.",
+				monitoredLinks, dudePlural(monitoredLinks, "enlace", "enlaces")))
 	}
 	if err := encryptDudePreviewSecrets(&preview); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -289,7 +292,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		neededProfiles[sourceID] = true
 	}
 	if missingProfileRefs > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d equipos referencian perfiles SNMP que no están en el preview.", missingProfileRefs))
+		warnings = append(warnings, fmt.Sprintf("Equipos que referencian perfiles SNMP no incluidos en el preview: %d.", missingProfileRefs))
 	}
 	snmpProfileIDs := map[string]string{}
 	snmpProfilesCreated, snmpProfilesReused := 0, 0
@@ -825,10 +828,10 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if missingLinkMasters > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d enlaces tenían interfaz maestra pero su dispositivo no se importó; se crearon como enlaces simples.", missingLinkMasters))
+		warnings = append(warnings, fmt.Sprintf("Enlaces con interfaz maestra sin dispositivo importado: %d. Se crearon como enlaces simples.", missingLinkMasters))
 	}
 	if skippedLinks > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d enlaces no se pudieron crear porque uno de sus extremos no es un dispositivo ni un elemento decorativo importable.", skippedLinks))
+		warnings = append(warnings, fmt.Sprintf("Enlaces no creados porque uno de sus extremos no es un dispositivo ni un elemento decorativo importable: %d.", skippedLinks))
 	}
 	result, _ := json.Marshal(map[string]any{
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
@@ -883,6 +886,13 @@ func dudeLinkMonitoring(link dude.Link, deviceIDs map[string]string, enabled boo
 		return
 	}
 	return "snmp", deviceID, link.MasterInterface
+}
+
+func dudePlural(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 func resolveDudeAddress(raw string) string {

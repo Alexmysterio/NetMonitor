@@ -349,7 +349,7 @@ func ensureDudeRouterOSCredentials(ctx context.Context, tx pgx.Tx, groups []dude
 		}
 	}
 	if withoutPassword > 0 {
-		warnings = append(warnings, fmt.Sprintf("%d credenciales RouterOS de Dude no tienen contraseña; complétalas en el inventario.", withoutPassword))
+		warnings = append(warnings, fmt.Sprintf("Credenciales RouterOS sin contraseña: %d. Complétalas en el inventario.", withoutPassword))
 	}
 	return created, reused, assigned, skipped, warnings, nil
 }
