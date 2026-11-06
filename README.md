@@ -22,7 +22,7 @@ NetMonitor es una alternativa web a los clásicos paneles de monitorización de 
 - **RouterOS**: inventario, plantillas, despliegues con aprobación obligatoria, dry-run y snapshots antes/después.
 - **Accesos por equipo**: credenciales cifradas por servicio (Winbox, Web/HTTP y SSH), con respaldo de la credencial RouterOS. Abre Winbox con el puente local, lanza SSH/Web y permite copiar usuario o contraseña como fuente de verdad.
 - **Informes**: PDF/CSV, SLA por cliente, disponibilidad por interfaz, comparativa mensual, programación y exportación local/S3.
-- **Importación de The Dude**: mapas, submapas, dispositivos, enlaces y elementos decorativos desde SQLite/XML, incluidas las bases modernas con objetos Nova en la tabla `objs`. Los mapas generales que solo contienen submapas reconstruyen la jerarquía padre/hijo, y los enlaces de The Dude se recrean como enlaces reales entre equipos y submapas (no como etiquetas de texto). Antes de aplicar se pueden asignar perfiles SNMP, sondas y tipo de dispositivo por equipo o a todos.
+- **Importación de The Dude**: mapas, submapas, dispositivos, enlaces y elementos decorativos desde la base SQLite (`dude.db`) o XML, incluidas las bases modernas con objetos Nova en la tabla `objs`. Los mapas generales que solo contienen submapas reconstruyen la jerarquía padre/hijo, y los enlaces de The Dude se recrean como enlaces reales entre equipos y submapas (no como etiquetas de texto). También importa credenciales RouterOS cifradas y perfiles SNMP de Dude, que se asignan automáticamente sin sobrescribir las credenciales ni los perfiles ya asignados; los enlaces con equipo e interfaz maestra se convierten en enlaces monitorizados por SNMP. Los perfiles SNMPv3 pueden requerir completar los secretos a mano. Antes de aplicar se pueden asignar perfiles SNMP, sondas y tipo de dispositivo por equipo o a todos.
 - **Seguridad**: RBAC por mapa/grupo/dispositivo, API keys, auditoría, cifrado AES-256-GCM de secretos, JWT revocable y sesiones con refresco de permisos.
 - **Agentes remotos**: sondeo desde otras redes, cuotas, reconexión y mTLS opcional.
 - **Alta disponibilidad**: elección de líder por advisory lock de PostgreSQL y fanout de WebSocket con Redis.
@@ -447,6 +447,27 @@ En **Accesos → Winbox** puedes abrir Winbox con el usuario y la contraseña de
 La primera vez, Windows puede pedir confirmación para ejecutar el instalador `.vbs`; es solo durante la instalación. Si el puente no está arrancado, NetMonitor ofrece el protocolo como alternativa manual y avisa de que el navegador pedirá permiso.
 
 El puente solo se instala en el puesto cliente; no se ejecuta nada en el servidor. Escucha únicamente en `127.0.0.1:47821`, no abre puertos a la red y no muestra ventanas de consola. Usa HTTPS si el panel es accesible desde fuera de la red local, porque el puente recibe la credencial RouterOS en esa conexión. Si Windows bloquea el `.vbs` descargado, desbloquéalo en las propiedades del archivo. Si Winbox o SSH no se abren, revisa el diagnóstico en `%LOCALAPPDATA%\NetMonitor\bridge.log`.
+
+## Importación desde The Dude
+
+La importación acepta la base SQLite de The Dude (`dude.db` o cualquier `.sqlite`/`.sqlite3`) y exportaciones XML, con un límite de 256 MB. El archivo se procesa primero en un preview: revisa los mapas, equipos, submapas, decoraciones y enlaces detectados, y elige qué importar antes de escribir en el inventario.
+
+El preview permite:
+
+- **Importar credenciales RouterOS**: crea credenciales a partir del usuario y la contraseña de cada equipo de The Dude y las asigna a los equipos importados.
+- **Importar perfiles SNMP**: crea los perfiles SNMP de The Dude y los asigna a los equipos que los referencian.
+- **Sobrescribir credenciales RouterOS existentes**: desactivado por defecto; solo reasigna la credencial RouterOS de los equipos que ya tenían una. Las asignaciones SNMP existentes también se conservan, salvo que elijas un perfil SNMP manualmente en el preview.
+- **Monitorizar enlaces con interfaz**: los enlaces de The Dude que tengan equipo e interfaz maestra se crean como enlaces monitorizados por SNMP; el resto se crea como enlace simple.
+
+Las credenciales y los perfiles SNMP de The Dude son opcionales: puedes desactivar su importación en el preview y mantener únicamente mapas, equipos y enlaces.
+
+Las credenciales RouterOS se guardan en `routeros_credentials` y se enlazan al equipo mediante `devices.routeros_credential_id`. Los accesos por equipo (**Winbox**, **Web/HTTP** y **SSH**) siguen usando la credencial propia si existe y, si no, la credencial RouterOS asignada.
+
+Los perfiles SNMP se crean con el nombre `Dude · <nombre> [<source_id>]` y la community se almacena cifrada. Solo se asignan automáticamente a equipos que no tengan ya un perfil SNMP; si eliges un perfil manualmente en el preview, esa selección tiene prioridad sobre el perfil importado y sobre el perfil existente.
+
+Si The Dude tiene equipo e interfaz maestra en el enlace, NetMonitor crea el enlace con `mastering_type='snmp'`, `master_device_id` y `snmp_if_index`. La monitorización usa el índice de interfaz tal como aparece en The Dude, que puede no coincidir con el `ifIndex` SNMP real; si el tráfico no aparece, ajusta el índice en el enlace. Si falta el equipo o la interfaz maestra, el enlace se crea como enlace simple.
+
+Los secretos se cifran en reposo y no se devuelven en el preview ni en el historial de importaciones. Los perfiles SNMPv3 se importan como un perfil base (versión, puerto, tiempo de espera y reintentos) y puede que tengas que completar a mano el usuario y las claves de autenticación y privacidad.
 
 ## Seguridad
 
