@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -72,7 +73,7 @@ func (s *Server) previewDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if monitoredLinks > 0 {
 		preview.Warnings = append(preview.Warnings,
-			fmt.Sprintf("Se asignará monitorización SNMP a %d enlaces.", monitoredLinks))
+			fmt.Sprintf("Se detectaron %d enlaces con interfaz maestra para monitorización SNMP.", monitoredLinks))
 	}
 	if err := encryptDudePreviewSecrets(&preview); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -864,8 +865,10 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+// Dude MasteringType is intentionally ignored: NetMonitor only supports SNMP
+// monitoring, and the presence of a master interface is the signal we need.
 func dudeLinkHasMasterInterface(link dude.Link) bool {
-	return link.MasterInterface > 0 && int64(link.MasterInterface) < 0xffffffff
+	return link.MasterInterface > 0 && link.MasterInterface <= math.MaxInt32
 }
 
 func dudeLinkMonitoring(link dude.Link, deviceIDs map[string]string, enabled bool) (mastering, masterDeviceID string, ifIndex int) {

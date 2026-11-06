@@ -9,6 +9,7 @@ import (
 func TestDudeLinkMonitoring(t *testing.T) {
 	const deviceUUID = "11111111-1111-4111-8111-111111111111"
 	deviceIDs := map[string]string{"device-1": deviceUUID}
+	sentinel := ^uint32(0)
 
 	tests := []struct {
 		name          string
@@ -52,7 +53,7 @@ func TestDudeLinkMonitoring(t *testing.T) {
 		},
 		{
 			name:          "sentinel interface keeps link simple",
-			link:          dude.Link{MasterDevice: "device-1", MasterInterface: int(^uint32(0))},
+			link:          dude.Link{MasterDevice: "device-1", MasterInterface: int(sentinel)},
 			enabled:       true,
 			wantMastering: "simple",
 		},
@@ -81,6 +82,7 @@ func TestDudeLinkMonitoring(t *testing.T) {
 }
 
 func TestDudeLinkHasMasterInterface(t *testing.T) {
+	sentinel := ^uint32(0)
 	tests := []struct {
 		name string
 		link dude.Link
@@ -89,7 +91,7 @@ func TestDudeLinkHasMasterInterface(t *testing.T) {
 		{name: "zero", link: dude.Link{}, want: false},
 		{name: "positive", link: dude.Link{MasterInterface: 7}, want: true},
 		{name: "negative", link: dude.Link{MasterInterface: -1}, want: false},
-		{name: "sentinel", link: dude.Link{MasterInterface: int(^uint32(0))}, want: false},
+		{name: "sentinel", link: dude.Link{MasterInterface: int(sentinel)}, want: false},
 	}
 
 	for _, tt := range tests {
