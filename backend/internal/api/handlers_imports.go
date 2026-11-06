@@ -66,7 +66,7 @@ func (s *Server) previewDudeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	monitoredLinks := 0
 	for _, l := range preview.Links {
-		if l.MasterInterface > 0 && l.MasterDevice != "" {
+		if l.MasterDevice != "" && dudeLinkHasMasterInterface(l) {
 			monitoredLinks++
 		}
 	}
