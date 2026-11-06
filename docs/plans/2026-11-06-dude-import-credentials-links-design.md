@@ -25,7 +25,9 @@ La importación sigue siendo un preview revisable antes de aplicar cambios.
 - Nombre del perfil: `Dude · <nombre del primer equipo>` con sufijo si ya existe
   un perfil con credenciales distintas.
 - Por defecto solo se asigna si el equipo no tiene ya credencial RouterOS.
-  La casilla "Sobrescribir credenciales existentes" permite forzar el cambio.
+  La casilla "Sobrescribir credenciales RouterOS existentes" permite forzar el cambio
+  solo cuando la contraseña importada no está vacía: una contraseña vacía o
+  indescifrable nunca sustituye una credencial existente.
 - Las credenciales existentes solo se reutilizan si usuario y contraseña
   descifrados coinciden.
 
@@ -43,8 +45,10 @@ La importación sigue siendo un preview revisable antes de aplicar cambios.
   versión/puerto/community coinciden.
 - SNMPv3: se importa la ficha (nombre, versión, puerto) y se avisa de que los
   secretos v3 deben completarse manualmente.
+- Una community indescifrable omite el perfil con un aviso.
 - La asignación manual del preview (`snmp_profiles`) tiene prioridad sobre la
-  asignación automática de Dude.
+  asignación automática de Dude. La asignación automática nunca sobrescribe un
+  perfil SNMP ya asignado; solo lo hace una selección manual.
 
 ### Enlaces monitorizados
 
@@ -54,6 +58,9 @@ La importación sigue siendo un preview revisable antes de aplicar cambios.
   - `mastering_type = 'snmp'`
   - `master_device_id = <equipo importado>`
   - `snmp_if_index = <interfaz de Dude>`
+- El enlace solo queda en SNMP si el equipo maestro tiene un perfil SNMP
+  (recién asignado, manual o preexistente). Si no lo tiene, se crea simple y se
+  añade un aviso. El poller ignora los enlaces SNMP sin perfil en el maestro.
 - Si el equipo maestro no se importa o no hay interfaz, el enlace se crea simple
   y se genera un aviso.
 - Casilla en el preview "Monitorizar enlaces con interfaz", activada por defecto.
@@ -67,8 +74,9 @@ La importación sigue siendo un preview revisable antes de aplicar cambios.
 - Al guardar el preview se cifran contraseña RouterOS y community SNMP con
   `secure.Encrypt`; el payload de `dude_imports` solo contiene ciphertext.
 - La API de preview e historial limpia los campos cifrados antes de responder.
-- Al aplicar se descifran; si falla el descifrado se omite esa credencial y se
-  añade un aviso.
+- Al aplicar se descifran; si falla el descifrado se omite esa credencial o
+  perfil y se añade un aviso. Una contraseña vacía o indescifrable nunca
+  sustituye una credencial RouterOS existente.
 - No se crea una tabla nueva de secretos.
 
 ## Cambios funcionales
