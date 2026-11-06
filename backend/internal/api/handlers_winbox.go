@@ -4,13 +4,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/redis/go-redis/v9"
 
@@ -155,21 +153,12 @@ func (s *Server) redeemWinboxTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) downloadWinboxBridge(w http.ResponseWriter, r *http.Request) {
-	// Keep the downloaded .cmd small: cmd.exe has a ~8191 character command
-	// line limit, and embedding the whole installer made Windows reject it.
-	// The small bootstrap downloads and runs the real installer.
-	installURL := requestBaseURL(r) + "/api/v1/tools/winbox/install.ps1"
-	bootstrap := strings.ReplaceAll(winboxBootstrapScript, "__INSTALL_URL__", strings.ReplaceAll(installURL, "'", "''"))
-	encoded := encodePowerShell(bootstrap)
-	cmd := "@echo off\r\n" +
-		"title NetMonitor Access Bridge\r\n" +
-		"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand " + encoded + "\r\n" +
-		"if errorlevel 1 pause\r\n"
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="netmonitor-winbox-bridge.cmd"`)
+	server := strings.ReplaceAll(requestBaseURL(r), `"`, `""`)
+	vbs := strings.ReplaceAll(winboxInstallerVBS, "__SERVER__", server)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="netmonitor-bridge-installer.vbs"`)
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(cmd))
+	_, _ = w.Write([]byte(vbs))
 }
 
 // downloadWinboxInstallerPS1 is public on purpose: it only contains the local
@@ -213,22 +202,38 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func encodePowerShell(script string) string {
-	units := utf16.Encode([]rune(script))
-	out := make([]byte, len(units)*2)
-	for i, unit := range units {
-		binary.LittleEndian.PutUint16(out[i*2:], unit)
-	}
-	return base64.StdEncoding.EncodeToString(out)
-}
-
-const winboxBootstrapScript = `$ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$client = New-Object System.Net.WebClient
-$client.Proxy = $null
-$installer = Join-Path $env:TEMP 'netmonitor-winbox-install.ps1'
-$client.DownloadFile('__INSTALL_URL__', $installer)
-& $installer
+const winboxInstallerVBS = `Option Explicit
+Dim shell, fso, http, stream, dir, installer, server
+Set shell = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+server = "__SERVER__"
+dir = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\NetMonitor"
+If Not fso.FolderExists(dir) Then fso.CreateFolder(dir)
+installer = shell.ExpandEnvironmentStrings("%TEMP%") & "\netmonitor-winbox-install.ps1"
+On Error Resume Next
+Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+http.Open "GET", server & "/api/v1/tools/winbox/install.ps1", False
+http.Send
+If Err.Number <> 0 Then
+  MsgBox "No se pudo descargar el instalador: " & Err.Description, 16, "NetMonitor"
+  WScript.Quit 1
+End If
+If http.Status <> 200 Then
+  MsgBox "No se pudo descargar el instalador (HTTP " & http.Status & ").", 16, "NetMonitor"
+  WScript.Quit 1
+End If
+Set stream = CreateObject("ADODB.Stream")
+stream.Type = 1
+stream.Open
+stream.Write http.ResponseBody
+stream.SaveToFile installer, 2
+stream.Close
+If Err.Number <> 0 Then
+  MsgBox "No se pudo guardar el instalador: " & Err.Description, 16, "NetMonitor"
+  WScript.Quit 1
+End If
+On Error GoTo 0
+shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & installer & Chr(34), 0, True
 `
 
 const winboxBridgeScript = `param([string]$LaunchUri)
@@ -444,9 +449,18 @@ const winboxBridgeInstaller = `$ErrorActionPreference = 'Stop'
 $installDir = Join-Path $env:LOCALAPPDATA 'NetMonitor'
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 $bridgePath = Join-Path $installDir 'winbox-bridge.ps1'
+$launcherPath = Join-Path $installDir 'winbox-bridge.vbs'
 $bridge = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__BRIDGE_B64__'))
 Set-Content -Path $bridgePath -Value $bridge -Encoding UTF8
-$command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $bridgePath + '" "%1"'
+$launcher = @'
+Set shell = CreateObject("WScript.Shell")
+If WScript.Arguments.Count = 0 Then WScript.Quit 1
+script = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\NetMonitor\winbox-bridge.ps1"
+cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & script & Chr(34) & " " & Chr(34) & WScript.Arguments(0) & Chr(34)
+shell.Run cmd, 0, False
+'@
+Set-Content -Path $launcherPath -Value $launcher -Encoding ASCII
+$command = 'wscript.exe //B //NoLogo "' + $launcherPath + '" "%1"'
 foreach ($scheme in @('netmonitor-winbox', 'netmonitor-tools')) {
   $base = 'HKCU:\Software\Classes\' + $scheme
   New-Item -Path $base -Force | Out-Null

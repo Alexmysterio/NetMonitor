@@ -211,7 +211,7 @@ export default function DeviceAccessPanel({
   const downloadBridge = async () => {
     setBridgeError('')
     try {
-      await apiDownload('/tools/winbox/bridge', 'netmonitor-winbox-bridge.cmd')
+      await apiDownload('/tools/winbox/bridge', 'netmonitor-bridge-installer.vbs')
     } catch (e) {
       setBridgeError((e as Error).message)
     }
