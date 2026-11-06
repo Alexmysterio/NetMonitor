@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/netmonitor/netmonitor/internal/auth"
 	"github.com/netmonitor/netmonitor/internal/dude"
 )
@@ -154,19 +155,42 @@ func (s *Server) getDudeImport(w http.ResponseWriter, r *http.Request) {
 }
 
 type dudeApplyRequest struct {
-	MapIDs          *[]string         `json:"map_ids"`
-	DeviceSourceIDs *[]string         `json:"device_source_ids"`
-	SNMPProfiles    map[string]string `json:"snmp_profiles"`
-	ProbeIDs        []string          `json:"probe_ids"`
-	DeviceTypes     map[string]string `json:"device_types"`
-	ParentMapID     string            `json:"parent_map_id"`
-	CreateLinks     *bool             `json:"create_links"`
-	Prefix          string            `json:"name_prefix"`
+	MapIDs               *[]string         `json:"map_ids"`
+	DeviceSourceIDs      *[]string         `json:"device_source_ids"`
+	SNMPProfiles         map[string]string `json:"snmp_profiles"`
+	ProbeIDs             []string          `json:"probe_ids"`
+	DeviceTypes          map[string]string `json:"device_types"`
+	ParentMapID          string            `json:"parent_map_id"`
+	CreateLinks          *bool             `json:"create_links"`
+	Prefix               string            `json:"name_prefix"`
+	ImportCredentials    *bool             `json:"import_credentials"`
+	ImportSNMP           *bool             `json:"import_snmp"`
+	OverwriteCredentials *bool             `json:"overwrite_credentials"`
+	AssignLinkMonitoring *bool             `json:"assign_link_monitoring"`
 }
 
 func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	var req dudeApplyRequest
 	_ = decodeBody(r, &req)
+	importCredentials := true
+	if req.ImportCredentials != nil {
+		importCredentials = *req.ImportCredentials
+	}
+	importSNMP := true
+	if req.ImportSNMP != nil {
+		importSNMP = *req.ImportSNMP
+	}
+	overwriteCredentials := false
+	if req.OverwriteCredentials != nil {
+		overwriteCredentials = *req.OverwriteCredentials
+	}
+	assignLinkMonitoring := true
+	if req.AssignLinkMonitoring != nil {
+		assignLinkMonitoring = *req.AssignLinkMonitoring
+	}
+	// Used by the credential and link-monitoring import steps.
+	_ = importCredentials
+	_ = assignLinkMonitoring
 	ctx := r.Context()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -215,27 +239,83 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			selectedDevices[d.SourceID] = true
 		}
 	}
-	snmpAssignments := map[string]string{}
-	var profileIDs []string
-	seenProfiles := map[string]bool{}
+	manualSNMP := map[string]string{}
+	var manualProfileIDs []string
+	seenManualProfiles := map[string]bool{}
 	for sourceID, profileID := range req.SNMPProfiles {
 		profileID = strings.TrimSpace(profileID)
 		if profileID == "" || !selectedDevices[sourceID] {
 			continue
 		}
-		snmpAssignments[sourceID] = profileID
-		if !seenProfiles[profileID] {
-			seenProfiles[profileID] = true
-			profileIDs = append(profileIDs, profileID)
+		manualSNMP[sourceID] = profileID
+		if !seenManualProfiles[profileID] {
+			seenManualProfiles[profileID] = true
+			manualProfileIDs = append(manualProfileIDs, profileID)
 		}
 	}
-	if len(profileIDs) > 0 {
+	if len(manualProfileIDs) > 0 {
 		var count int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM snmp_profiles WHERE id = ANY($1::uuid[])`, profileIDs).Scan(&count); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM snmp_profiles WHERE id = ANY($1::uuid[])`, manualProfileIDs).Scan(&count); err != nil {
 			writeError(w, http.StatusBadRequest, "perfil SNMP no válido")
 			return
 		}
-		if count != len(profileIDs) {
+		if count != len(manualProfileIDs) {
+			writeError(w, http.StatusBadRequest, "uno o más perfiles SNMP ya no existen")
+			return
+		}
+	}
+	neededProfiles := map[string]bool{}
+	for _, d := range preview.Devices {
+		if len(selectedDevices) > 0 && !selectedDevices[d.SourceID] {
+			continue
+		}
+		if manualSNMP[d.SourceID] == "" && d.SNMPProfileSourceID != "" {
+			neededProfiles[d.SNMPProfileSourceID] = true
+		}
+	}
+	snmpProfileIDs := map[string]string{}
+	snmpProfilesCreated, snmpProfilesReused := 0, 0
+	if importSNMP && len(neededProfiles) > 0 {
+		ids, created, reused, snmpWarnings, err := ensureDudeSNMPProfiles(ctx, tx, preview.SNMPProfiles, neededProfiles)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		snmpProfileIDs = ids
+		snmpProfilesCreated = created
+		snmpProfilesReused = reused
+		warnings = append(warnings, snmpWarnings...)
+	}
+	snmpAssignments := map[string]string{}
+	for sourceID, profileID := range manualSNMP {
+		snmpAssignments[sourceID] = profileID
+	}
+	for _, d := range preview.Devices {
+		if len(selectedDevices) > 0 && !selectedDevices[d.SourceID] {
+			continue
+		}
+		if manualSNMP[d.SourceID] != "" {
+			continue
+		}
+		if profileID := snmpProfileIDs[d.SNMPProfileSourceID]; profileID != "" {
+			snmpAssignments[d.SourceID] = profileID
+		}
+	}
+	var assignedProfileIDs []string
+	seenAssignedProfiles := map[string]bool{}
+	for _, profileID := range snmpAssignments {
+		if !seenAssignedProfiles[profileID] {
+			seenAssignedProfiles[profileID] = true
+			assignedProfileIDs = append(assignedProfileIDs, profileID)
+		}
+	}
+	if len(assignedProfileIDs) > 0 {
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM snmp_profiles WHERE id = ANY($1::uuid[])`, assignedProfileIDs).Scan(&count); err != nil {
+			writeError(w, http.StatusBadRequest, "perfil SNMP no válido")
+			return
+		}
+		if count != len(assignedProfileIDs) {
 			writeError(w, http.StatusBadRequest, "uno o más perfiles SNMP ya no existen")
 			return
 		}
@@ -356,7 +436,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		createdMaps = 1
 	}
 
-	createdDevices, reusedDevices, snmpAssigned, probesAdded, deviceTypesAssigned := 0, 0, 0, 0, 0
+	createdDevices, reusedDevices, snmpAssigned, snmpSkipped, probesAdded, deviceTypesAssigned := 0, 0, 0, 0, 0, 0
 	createdSubmaps := 0
 	deviceIDs := map[string]string{}
 	nodeElements := map[string]string{}
@@ -425,11 +505,23 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			deviceTypesAssigned++
 		}
 		if profileID := snmpAssignments[d.SourceID]; profileID != "" {
-			if _, err := tx.Exec(ctx, `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1`, deviceID, profileID); err != nil {
+			manual := manualSNMP[d.SourceID] != ""
+			var ct pgconn.CommandTag
+			var err error
+			if manual || overwriteCredentials {
+				ct, err = tx.Exec(ctx, `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1`, deviceID, profileID)
+			} else {
+				ct, err = tx.Exec(ctx, `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1 AND snmp_profile_id IS NULL`, deviceID, profileID)
+			}
+			if err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			snmpAssigned++
+			if ct.RowsAffected() > 0 {
+				snmpAssigned++
+			} else {
+				snmpSkipped++
+			}
 		}
 		if len(probeIDs) > 0 {
 			ct, err := tx.Exec(ctx, `
@@ -676,7 +768,9 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
 		"created_decorations": createdDecorations, "created_submaps": createdSubmaps,
 		"created_links": createdLinks, "skipped_links": skippedLinks,
-		"snmp_assigned": snmpAssigned, "probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
+		"snmp_profiles_created": snmpProfilesCreated, "snmp_profiles_reused": snmpProfilesReused,
+		"snmp_assigned": snmpAssigned, "snmp_skipped": snmpSkipped,
+		"probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs,
 	})
@@ -695,7 +789,9 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		"created_maps": createdMaps, "created_devices": createdDevices, "reused_devices": reusedDevices,
 		"created_links": createdLinks, "skipped_links": skippedLinks,
 		"created_decorations": createdDecorations, "created_submaps": createdSubmaps,
-		"snmp_assigned": snmpAssigned, "probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
+		"snmp_profiles_created": snmpProfilesCreated, "snmp_profiles_reused": snmpProfilesReused,
+		"snmp_assigned": snmpAssigned, "snmp_skipped": snmpSkipped,
+		"probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs, "by": uid.Username,
 	}})
