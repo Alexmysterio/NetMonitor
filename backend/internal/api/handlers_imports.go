@@ -188,8 +188,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	if req.AssignLinkMonitoring != nil {
 		assignLinkMonitoring = *req.AssignLinkMonitoring
 	}
-	// Used by the credential and link-monitoring import steps.
-	_ = importCredentials
+	// Used by the link-monitoring import step.
 	_ = assignLinkMonitoring
 	ctx := r.Context()
 	tx, err := s.pool.Begin(ctx)
@@ -713,6 +712,34 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		decorationElements[decoration.SourceID] = elemID
 	}
 
+	var credentialDevices []dudeCredentialDevice
+	if importCredentials {
+		for _, d := range preview.Devices {
+			if !dudeDeviceSelected(selectedDevices, d.SourceID) {
+				continue
+			}
+			deviceID := deviceIDs[d.SourceID]
+			if deviceID == "" || strings.TrimSpace(d.Username) == "" {
+				continue
+			}
+			credentialDevices = append(credentialDevices, dudeCredentialDevice{
+				SourceID: d.SourceID, DeviceID: deviceID, DeviceName: d.Name,
+				Username: d.Username, Password: d.Password,
+			})
+		}
+	}
+	createdCredentials, reusedCredentials, assignedCredentials, skippedCredentials := 0, 0, 0, 0
+	if groups := groupDudeCredentials(credentialDevices); len(groups) > 0 {
+		var credentialWarnings []string
+		createdCredentials, reusedCredentials, assignedCredentials, skippedCredentials, credentialWarnings, err =
+			ensureDudeRouterOSCredentials(ctx, tx, groups, overwriteCredentials, preview.Filename)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		warnings = append(warnings, credentialWarnings...)
+	}
+
 	createdLinks, skippedLinks := 0, 0
 	if createLinks {
 		// Reuse only links between map elements that belong to this import.
@@ -790,6 +817,8 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		"created_links": createdLinks, "skipped_links": skippedLinks,
 		"snmp_profiles_created": snmpProfilesCreated, "snmp_profiles_reused": snmpProfilesReused,
 		"snmp_assigned": snmpAssigned, "snmp_skipped": snmpSkipped,
+		"routeros_credentials_created": createdCredentials, "routeros_credentials_reused": reusedCredentials,
+		"routeros_credentials_assigned": assignedCredentials, "routeros_credentials_skipped": skippedCredentials,
 		"probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs,
@@ -811,6 +840,8 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		"created_decorations": createdDecorations, "created_submaps": createdSubmaps,
 		"snmp_profiles_created": snmpProfilesCreated, "snmp_profiles_reused": snmpProfilesReused,
 		"snmp_assigned": snmpAssigned, "snmp_skipped": snmpSkipped,
+		"routeros_credentials_created": createdCredentials, "routeros_credentials_reused": reusedCredentials,
+		"routeros_credentials_assigned": assignedCredentials, "routeros_credentials_skipped": skippedCredentials,
 		"probes_added": probesAdded, "device_types_assigned": deviceTypesAssigned,
 		"skipped_devices": skipped, "warnings": warnings,
 		"map_ids": mapIDs, "by": uid.Username,
