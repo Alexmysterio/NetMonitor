@@ -239,12 +239,19 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			selectedDevices[d.SourceID] = true
 		}
 	}
+	devicesBySourceID := map[string]dude.Device{}
+	for _, d := range preview.Devices {
+		devicesBySourceID[d.SourceID] = d
+	}
 	manualSNMP := map[string]string{}
 	var manualProfileIDs []string
 	seenManualProfiles := map[string]bool{}
 	for sourceID, profileID := range req.SNMPProfiles {
 		profileID = strings.TrimSpace(profileID)
-		if profileID == "" || !selectedDevices[sourceID] {
+		if profileID == "" || !dudeDeviceSelected(selectedDevices, sourceID) {
+			continue
+		}
+		if d, ok := devicesBySourceID[sourceID]; ok && !dudeDeviceInSelectedMap(d, selectedMaps) {
 			continue
 		}
 		manualSNMP[sourceID] = profileID
@@ -265,13 +272,26 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	neededProfiles := map[string]bool{}
+	missingProfileRefs := 0
 	for _, d := range preview.Devices {
-		if len(selectedDevices) > 0 && !selectedDevices[d.SourceID] {
+		if !dudeDeviceSelected(selectedDevices, d.SourceID) || !dudeDeviceInSelectedMap(d, selectedMaps) {
 			continue
 		}
-		if manualSNMP[d.SourceID] == "" && d.SNMPProfileSourceID != "" {
-			neededProfiles[d.SNMPProfileSourceID] = true
+		if manualSNMP[d.SourceID] != "" {
+			continue
 		}
+		if strings.TrimSpace(d.SNMPProfileSourceID) == "" && strings.TrimSpace(d.SNMPProfileName) == "" {
+			continue
+		}
+		sourceID := dudeDeviceSNMPProfileSourceID(d, preview.SNMPProfiles)
+		if sourceID == "" {
+			missingProfileRefs++
+			continue
+		}
+		neededProfiles[sourceID] = true
+	}
+	if missingProfileRefs > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d equipos referencian perfiles SNMP que no están en el preview.", missingProfileRefs))
 	}
 	snmpProfileIDs := map[string]string{}
 	snmpProfilesCreated, snmpProfilesReused := 0, 0
@@ -291,13 +311,13 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 		snmpAssignments[sourceID] = profileID
 	}
 	for _, d := range preview.Devices {
-		if len(selectedDevices) > 0 && !selectedDevices[d.SourceID] {
+		if !dudeDeviceSelected(selectedDevices, d.SourceID) || !dudeDeviceInSelectedMap(d, selectedMaps) {
 			continue
 		}
 		if manualSNMP[d.SourceID] != "" {
 			continue
 		}
-		if profileID := snmpProfileIDs[d.SNMPProfileSourceID]; profileID != "" {
+		if profileID := snmpProfileIDs[dudeDeviceSNMPProfileSourceID(d, preview.SNMPProfiles)]; profileID != "" {
 			snmpAssignments[d.SourceID] = profileID
 		}
 	}
@@ -443,10 +463,10 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	skipped := 0
 	order := 0
 	for _, d := range preview.Devices {
-		if len(selectedDevices) > 0 && !selectedDevices[d.SourceID] {
+		if !dudeDeviceSelected(selectedDevices, d.SourceID) {
 			continue
 		}
-		if d.SourceMapID != "" && !selectedMaps[d.SourceMapID] {
+		if !dudeDeviceInSelectedMap(d, selectedMaps) {
 			continue
 		}
 		targetMap := mapIDs[d.SourceMapID]

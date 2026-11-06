@@ -12,26 +12,113 @@ func TestDudeSNMPProfileKey(t *testing.T) {
 	if got := dudeSNMPProfileKey(p); got != "Dude · v2-public\x00v2c\x00161\x00public" {
 		t.Fatalf("unexpected key: %q", got)
 	}
-}
-
-func TestDudeSNMPExistingKey(t *testing.T) {
-	source := dude.SNMPProfile{Name: "v2-public", Version: "v2c", Port: 161, Community: "public"}
-	if got, want := dudeSNMPExistingKey("Dude · v2-public", "v2c", 161, "public"), dudeSNMPProfileKey(source); got != want {
-		t.Fatalf("unexpected existing key: %q, want %q", got, want)
+	p.SourceID = "60"
+	if got := dudeSNMPProfileKey(p); got != "Dude · v2-public [60]\x00v2c\x00161\x00public" {
+		t.Fatalf("unexpected key with source ID: %q", got)
 	}
 }
 
-func TestUniqueDudeSNMPName(t *testing.T) {
-	used := map[string]bool{"dude · v2-public": true}
-	if got := uniqueDudeSNMPName("Dude · v2-public", used); got != "Dude · v2-public (2)" {
-		t.Fatalf("unexpected name: %q", got)
+func TestDudeSNMPProfileNameDeterministic(t *testing.T) {
+	p := dude.SNMPProfile{SourceID: "60", Name: " v2-public ", Version: "v2c", Port: 161, Community: "public"}
+	first := dudeSNMPProfileName(p)
+	second := dudeSNMPProfileName(p)
+	if first != second {
+		t.Fatalf("name is not deterministic: %q != %q", first, second)
 	}
-	used["dude · v2-public (2)"] = true
-	if got := uniqueDudeSNMPName("Dude · v2-public", used); got != "Dude · v2-public (3)" {
-		t.Fatalf("unexpected name: %q", got)
+	if first != "Dude · v2-public [60]" {
+		t.Fatalf("unexpected name: %q", first)
 	}
-	long := uniqueDudeSNMPName(strings.Repeat("x", 120), map[string]bool{})
-	if len([]rune(long)) != dudeSNMPProfileNameMax {
-		t.Fatalf("long name was not truncated: %d runes", len([]rune(long)))
+}
+
+func TestDudeSNMPProfileNameKeepsSourceIDWhenTruncated(t *testing.T) {
+	p := dude.SNMPProfile{
+		SourceID: "source-123", Name: strings.Repeat("x", 200),
+		Version: "v2c", Port: 161, Community: "public",
+	}
+	name := dudeSNMPProfileName(p)
+	if len([]rune(name)) > dudeSNMPProfileNameMax {
+		t.Fatalf("name too long: %d runes", len([]rune(name)))
+	}
+	if !strings.HasSuffix(name, " [source-123]") {
+		t.Fatalf("source ID suffix was lost: %q", name)
+	}
+	if !strings.HasPrefix(name, dudeSNMPProfilePrefix) {
+		t.Fatalf("prefix missing: %q", name)
+	}
+}
+
+func TestDudeSNMPProfileHashedNameDiffersBySettings(t *testing.T) {
+	base := dude.SNMPProfile{SourceID: "60", Name: "v2-public", Version: "v2c", Port: 161}
+	public := base
+	public.Community = "public"
+	private := base
+	private.Community = "private"
+	firstName := dudeSNMPProfileHashedName(public)
+	secondName := dudeSNMPProfileHashedName(private)
+	if firstName == secondName {
+		t.Fatalf("different settings produced the same name: %q", firstName)
+	}
+	if !strings.Contains(firstName, " #") || !strings.HasSuffix(firstName, " [60]") {
+		t.Fatalf("unexpected hashed name: %q", firstName)
+	}
+	if len([]rune(firstName)) > dudeSNMPProfileNameMax {
+		t.Fatalf("hashed name too long: %d runes", len([]rune(firstName)))
+	}
+}
+
+func TestDudeSNMPProfileHashedNameReused(t *testing.T) {
+	p := dude.SNMPProfile{SourceID: "60", Name: "v2-public", Version: "v2c", Port: 161, Community: "private"}
+	base := dudeSNMPProfileName(p)
+	hashed := dudeSNMPProfileHashedName(p)
+	existing := map[string]dudeSNMPExistingProfile{
+		strings.ToLower(base): {
+			id: "conflict", name: base, version: "v2c", port: 161, community: "public", decoded: true,
+		},
+		strings.ToLower(hashed): {
+			id: "profile-id", name: hashed, version: "v2c", port: 161, community: "private", decoded: true,
+		},
+	}
+	name, profile, found := dudeSNMPProfileTargetName(p, existing)
+	if !found || name != hashed || profile.id != "profile-id" || !dudeSNMPProfileMatches(p, profile) {
+		t.Fatalf("hashed profile was not reused: name=%q found=%v profile=%+v", name, found, profile)
+	}
+}
+
+func TestDudeDeviceSNMPProfileSourceID(t *testing.T) {
+	profiles := []dude.SNMPProfile{
+		{SourceID: "60", Name: "v2-public"},
+		{SourceID: "61", Name: "Shared"},
+	}
+	cases := []struct {
+		name   string
+		device dude.Device
+		want   string
+	}{
+		{"source id wins", dude.Device{SNMPProfileSourceID: "60", SNMPProfileName: "Shared"}, "60"},
+		{"name fallback", dude.Device{SNMPProfileName: "v2-public"}, "60"},
+		{"legacy name in source id", dude.Device{SNMPProfileSourceID: "v2-public", SNMPProfileName: "v2-public"}, "60"},
+		{"missing profile", dude.Device{SNMPProfileSourceID: "nope", SNMPProfileName: "missing"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dudeDeviceSNMPProfileSourceID(tc.device, profiles); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDudeSelectionHelpers(t *testing.T) {
+	if !dudeDeviceSelected(map[string]bool{}, "any") {
+		t.Fatal("empty selection should mean all devices")
+	}
+	if dudeDeviceSelected(map[string]bool{"a": true}, "b") {
+		t.Fatal("unselected device should be skipped")
+	}
+	if !dudeDeviceInSelectedMap(dude.Device{}, map[string]bool{}) {
+		t.Fatal("device without a map should be importable")
+	}
+	if dudeDeviceInSelectedMap(dude.Device{SourceMapID: "m1"}, map[string]bool{}) {
+		t.Fatal("device on an unselected map should be skipped")
 	}
 }
