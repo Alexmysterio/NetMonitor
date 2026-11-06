@@ -17,7 +17,8 @@ import (
 //	magic[8] | field_count[u32] | fields...
 //	field: tag[u16] marker[u8] tcode[u8] value...
 //
-// Markers 0x10/0xfe are standard values, 0x11 is a compact one-byte value.
+// Markers 0x10/0xfe are standard values. Dude also uses 0x11 for ordinary
+// tcode values in continuation fields, so the tcode determines the width.
 // The decoder below is intentionally tolerant: it keeps every field it can
 // read and stops at an unknown/truncated value.
 var novaMagic = []byte{0x4d, 0x32, 0x01, 0x00, 0xff, 0x88, 0x01, 0x00}
@@ -81,12 +82,8 @@ func decodeNova(data []byte) (*novaMessage, bool) {
 }
 
 func readNovaValue(data []byte, pos int, marker, tcode byte, tag uint16) (novaValue, int, error) {
-	if marker == 0x11 {
-		if pos+1 > len(data) {
-			return novaValue{}, pos, fmt.Errorf("nova: fin de datos")
-		}
-		return novaValue{kind: novaU8, numV: uint64(data[pos])}, pos + 1, nil
-	}
+	// Dude uses marker 0x11 for ordinary tcode values in continuation fields,
+	// so the tcode (not the marker) determines the value width.
 	switch tcode {
 	case 0x00:
 		return novaValue{kind: novaBool, boolV: false}, pos, nil

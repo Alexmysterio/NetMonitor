@@ -77,9 +77,10 @@ func TestParseSQLite(t *testing.T) {
 }
 
 type novaTestField struct {
-	tag   uint16
-	tcode byte
-	value []byte
+	tag    uint16
+	marker byte
+	tcode  byte
+	value  []byte
 }
 
 func novaTestBlob(fields ...novaTestField) []byte {
@@ -87,8 +88,12 @@ func novaTestBlob(fields ...novaTestField) []byte {
 	buf.Write(novaMagic)
 	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(fields)))
 	for _, field := range fields {
+		marker := field.marker
+		if marker == 0 {
+			marker = 0x10
+		}
 		_ = binary.Write(&buf, binary.LittleEndian, field.tag)
-		buf.WriteByte(0x10)
+		buf.WriteByte(marker)
 		buf.WriteByte(field.tcode)
 		buf.Write(field.value)
 	}
@@ -116,6 +121,27 @@ func novaTestU32Array(values ...uint32) []byte {
 
 func novaTestIPv4(a, b, c, d byte) uint32 {
 	return uint32(a) | uint32(b)<<8 | uint32(c)<<16 | uint32(d)<<24
+}
+
+func TestDecodeNovaMarker11(t *testing.T) {
+	blob := novaTestBlob(
+		novaTestField{tag: 0x3c72, marker: 0x11, tcode: 0x08, value: novaTestU32(3000)},
+		novaTestField{tag: 0x3c69, marker: 0x11, tcode: 0x21, value: novaTestString("public")},
+		novaTestField{tag: 0x0010, marker: 0xfe, tcode: 0x21, value: novaTestString("v2-public")},
+	)
+	msg, ok := decodeNova(blob)
+	if !ok {
+		t.Fatal("blob was not decoded")
+	}
+	if timeout, _ := msg.u32(0x3c72); timeout != 3000 {
+		t.Fatalf("unexpected timeout: %d", timeout)
+	}
+	if community := msg.str(0x3c69); community != "public" {
+		t.Fatalf("unexpected community: %q", community)
+	}
+	if name := msg.str(0x0010); name != "v2-public" {
+		t.Fatalf("unexpected name: %q", name)
+	}
 }
 
 func TestParseDudeNovaSubmapsAndLinkLabels(t *testing.T) {
