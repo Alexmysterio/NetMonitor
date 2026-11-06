@@ -440,11 +440,13 @@ Cada equipo tiene una sección **Accesos** con credenciales independientes para 
 
 En **Accesos → Winbox** puedes abrir Winbox con el usuario y la contraseña del equipo. El navegador solo recibe un ticket de un solo uso (90 segundos); el puente local canjea el ticket contra NetMonitor y ejecuta `winbox.exe` con las credenciales.
 
-1. En el equipo Windows donde tengas instalado Winbox, pulsa **Descargar puente** y ejecuta el `.vbs` una vez. Se registra en `HKCU` (no requiere administrador) y no abre ventanas de consola.
-2. Vuelve a NetMonitor y pulsa **Abrir Winbox**. La primera vez el navegador puede pedir confirmación para abrir el protocolo; puedes marcar «recordar» o «permitir siempre».
+1. En el equipo Windows donde tengas instalado Winbox, pulsa **Descargar puente** y ejecuta el `.vbs` una vez. Se instala en `HKCU` (no requiere administrador), arranca en segundo plano y no abre ventanas de consola.
+2. Vuelve a NetMonitor y pulsa **Abrir Winbox** o **SSH**. El navegador habla con el puente por `127.0.0.1`, así que no pide permiso para abrir un protocolo externo en cada clic.
 3. Si cambias de dominio o de URL de NetMonitor, vuelve a instalar el puente para actualizar el servidor incrustado.
 
-El puente solo se instala en el puesto cliente; no se ejecuta nada en el servidor. El instalador y el manejador de protocolo usan Windows Script Host y PowerShell oculto, por lo que no muestran ventanas de consola. Usa HTTPS si el panel es accesible desde fuera de la red local, porque el puente recibe la credencial RouterOS en esa conexión. Si Windows bloquea el `.vbs` descargado, desbloquéalo en las propiedades del archivo. Si Winbox o SSH no se abren, revisa el diagnóstico en `%LOCALAPPDATA%\NetMonitor\bridge.log`.
+La primera vez, Windows puede pedir confirmación para ejecutar el instalador `.vbs`; es solo durante la instalación. Si el puente no está arrancado, NetMonitor ofrece el protocolo como alternativa manual y avisa de que el navegador pedirá permiso.
+
+El puente solo se instala en el puesto cliente; no se ejecuta nada en el servidor. Escucha únicamente en `127.0.0.1:47821`, no abre puertos a la red y no muestra ventanas de consola. Usa HTTPS si el panel es accesible desde fuera de la red local, porque el puente recibe la credencial RouterOS en esa conexión. Si Windows bloquea el `.vbs` descargado, desbloquéalo en las propiedades del archivo. Si Winbox o SSH no se abren, revisa el diagnóstico en `%LOCALAPPDATA%\NetMonitor\bridge.log`.
 
 ## Seguridad
 

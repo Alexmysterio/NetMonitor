@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -164,6 +165,28 @@ func (s *Server) downloadWinboxBridge(w http.ResponseWriter, r *http.Request) {
 // downloadWinboxInstallerPS1 is public on purpose: it only contains the local
 // bridge script and the public NetMonitor URL, never credentials. Keeping it
 // as a separate download avoids the Windows command-line length limit.
+func (s *Server) downloadWinbridgeExe(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSpace(s.cfg.WinbridgePath)
+	if path == "" {
+		path = "/app/netmonitor-winbridge.exe"
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "el puente Windows no está incluido en esta imagen")
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="netmonitor-tools.exe"`)
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, "netmonitor-tools.exe", info.ModTime(), f)
+}
+
 func (s *Server) downloadWinboxInstallerPS1(w http.ResponseWriter, r *http.Request) {
 	server := requestBaseURL(r)
 	bridge := strings.ReplaceAll(winboxBridgeScript, "__SERVER__", strings.ReplaceAll(server, "'", "''"))
@@ -203,37 +226,74 @@ func clientIP(r *http.Request) string {
 }
 
 const winboxInstallerVBS = `Option Explicit
-Dim shell, fso, http, stream, dir, installer, server
+Dim shell, fso, http, stream, dir, exePath, server, q, attempt
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 server = "__SERVER__"
 dir = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\NetMonitor"
 If Not fso.FolderExists(dir) Then fso.CreateFolder(dir)
-installer = shell.ExpandEnvironmentStrings("%TEMP%") & "\netmonitor-winbox-install.ps1"
+exePath = dir & "\netmonitor-tools.exe"
+q = Chr(34)
 On Error Resume Next
+shell.Run "taskkill /IM netmonitor-tools.exe /F", 0, True
 Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
-http.Open "GET", server & "/api/v1/tools/winbox/install.ps1", False
+http.SetProxy 1
+http.Open "GET", server & "/api/v1/tools/winbox/bridge.exe", False
 http.Send
 If Err.Number <> 0 Then
-  MsgBox "No se pudo descargar el instalador: " & Err.Description, 16, "NetMonitor"
+  MsgBox "No se pudo descargar el puente: " & Err.Description, 16, "NetMonitor"
   WScript.Quit 1
 End If
 If http.Status <> 200 Then
-  MsgBox "No se pudo descargar el instalador (HTTP " & http.Status & ").", 16, "NetMonitor"
+  MsgBox "No se pudo descargar el puente (HTTP " & http.Status & ").", 16, "NetMonitor"
   WScript.Quit 1
 End If
 Set stream = CreateObject("ADODB.Stream")
 stream.Type = 1
 stream.Open
 stream.Write http.ResponseBody
-stream.SaveToFile installer, 2
+stream.SaveToFile exePath, 2
 stream.Close
 If Err.Number <> 0 Then
-  MsgBox "No se pudo guardar el instalador: " & Err.Description, 16, "NetMonitor"
+  MsgBox "No se pudo guardar el puente: " & Err.Description, 16, "NetMonitor"
   WScript.Quit 1
 End If
 On Error GoTo 0
-shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & installer & Chr(34), 0, True
+Dim text
+Set text = fso.CreateTextFile(dir & "\server.txt", True)
+text.Write server
+text.Close
+If fso.FileExists(dir & "\winbox-bridge.ps1") Then fso.DeleteFile dir & "\winbox-bridge.ps1", True
+If fso.FileExists(dir & "\winbox-bridge.vbs") Then fso.DeleteFile dir & "\winbox-bridge.vbs", True
+shell.RegWrite "HKCU\Software\Microsoft\Windows\CurrentVersion\Run\NetMonitorAccessBridge", q & exePath & q & " --serve", "REG_SZ"
+Register "netmonitor-winbox"
+Register "netmonitor-tools"
+WScript.Sleep 800
+For attempt = 1 To 10
+  shell.Run q & exePath & q & " --serve", 0, False
+  WScript.Sleep 500
+  If IsRunning("netmonitor-tools.exe") Then Exit For
+Next
+If IsRunning("netmonitor-tools.exe") Then
+  MsgBox "Puente de accesos instalado. Vuelve a NetMonitor y pulsa Winbox o SSH.", 64, "NetMonitor"
+Else
+  MsgBox "El puente se instaló, pero no se pudo iniciar. Cierra sesión y vuelve a entrar, o ejecuta de nuevo este instalador.", 48, "NetMonitor"
+End If
+Sub Register(scheme)
+  Dim base
+  base = "HKCU\Software\Classes\" & scheme
+  shell.RegWrite base & "\", "URL:NetMonitor Access Bridge", "REG_SZ"
+  shell.RegWrite base & "\URL Protocol", "", "REG_SZ"
+  shell.RegWrite base & "\shell\open\command\", q & exePath & q & " " & q & "%1" & q, "REG_SZ"
+End Sub
+Function IsRunning(processName)
+  Dim wmi, processes
+  On Error Resume Next
+  Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+  Set processes = wmi.ExecQuery("SELECT Name FROM Win32_Process WHERE Name='" & processName & "'")
+  IsRunning = (processes.Count > 0)
+  On Error GoTo 0
+End Function
 `
 
 const winboxBridgeScript = `param([string]$LaunchUri)

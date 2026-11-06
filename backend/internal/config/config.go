@@ -39,6 +39,7 @@ type Config struct {
 	KeyRotationDays       int
 	LeaderElection        bool
 	ReportDir             string
+	WinbridgePath         string
 	AllowInsecureDefaults bool
 }
 
@@ -117,6 +118,7 @@ func Load() Config {
 		KeyRotationDays:       envIntAllowZero("ENCRYPTION_KEY_ROTATION_DAYS", 0),
 		LeaderElection:        envBool("CORE_LEADER_ELECTION", false),
 		ReportDir:             env("REPORT_DIR", "./reports"),
+		WinbridgePath:         env("WINBRIDGE_PATH", "/app/netmonitor-winbridge.exe"),
 		AllowInsecureDefaults: envBool("ALLOW_INSECURE_DEFAULTS", false),
 	}
 }

@@ -10,6 +10,7 @@ COPY backend/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/netmonitor-core ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/netmonitor-keyrotate ./cmd/keyrotate
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/netmonitor-agent ./cmd/agent
+RUN CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H=windowsgui" -o /out/netmonitor-winbridge.exe ./cmd/winbridge
 
 FROM node:22-alpine AS frontend
 WORKDIR /app
@@ -25,6 +26,7 @@ WORKDIR /app
 COPY --from=backend /out/netmonitor-core /app/netmonitor-core
 COPY --from=backend /out/netmonitor-keyrotate /app/netmonitor-keyrotate
 COPY --from=backend /out/netmonitor-agent /app/netmonitor-agent
+COPY --from=backend /out/netmonitor-winbridge.exe /app/netmonitor-winbridge.exe
 COPY --from=frontend /app/dist /usr/share/nginx/html
 COPY deploy/allinone/nginx.conf /etc/nginx/conf.d/default.conf
 COPY deploy/allinone/supervisord.conf /etc/supervisord.conf

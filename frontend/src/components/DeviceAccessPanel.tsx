@@ -186,11 +186,41 @@ export default function DeviceAccessPanel({
     setBridgeError('')
     setBridgeKind('')
     setBridgeUrl('')
+    setNotice('')
     try {
       const data = await apiSend<{ url: string }>('/tools/winbox/ticket', 'POST', { device_id: deviceId, kind })
+      const ticket = data.url.replace(/^netmonitor-winbox:\/\//, '')
       setBridgeUrl(data.url)
-      window.location.href = data.url
-      setBridgeKind(kind)
+      const controller = new AbortController()
+      const timeout = window.setTimeout(() => controller.abort(), 5000)
+      try {
+        const response = await fetch('http://127.0.0.1:47821/launch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ server: window.location.origin, ticket }),
+          signal: controller.signal,
+        })
+        window.clearTimeout(timeout)
+        if (response.ok) {
+          setNotice(kind === 'ssh' ? 'SSH lanzado.' : 'Winbox lanzado.')
+          return
+        }
+        let message = 'El puente no pudo abrir la aplicación.'
+        try {
+          const body = await response.json()
+          if (body?.error) message = String(body.error)
+        } catch {
+          /* keep generic message */
+        }
+        setBridgeError(message)
+        return
+      } catch {
+        // The local helper is not running/installed. Do not invoke the custom
+        // protocol automatically: browsers show a permission dialog for it.
+        setBridgeKind(kind)
+      } finally {
+        window.clearTimeout(timeout)
+      }
     } catch (e) {
       setBridgeError((e as Error).message)
     } finally {
@@ -248,9 +278,9 @@ export default function DeviceAccessPanel({
 
       {bridgeKind && (
         <div className="access-hint">
-          Si no se abrió {bridgeKind === 'ssh' ? 'SSH' : 'Winbox'}, instala el puente y usa{' '}
-          <a href={bridgeUrl} className="tool-link">abrir {bridgeKind === 'ssh' ? 'SSH' : 'Winbox'} ahora</a>.
-          <Button size="sm" variant="secondary" onClick={() => void downloadBridge()}><Download size={13} /> Descargar puente</Button>
+          El puente local no está activo. Instálalo para abrir {bridgeKind === 'ssh' ? 'SSH' : 'Winbox'} sin permisos del navegador.
+          <a href={bridgeUrl} className="tool-link">Usar el protocolo (puede pedir permiso)</a>
+          <Button size="sm" variant="secondary" onClick={() => void downloadBridge()}><Download size={13} /> Instalar puente</Button>
         </div>
       )}
       {bridgeError && <div className="form-error">{bridgeError}</div>}
