@@ -1201,6 +1201,35 @@ body.noc-flash { animation: nocFlash .6s ease-in-out 3; }
 .import-summary div { padding: 10px; border-radius: 10px; background: #f8fafc; border: 1px solid var(--line-2); text-align: center; }
 .import-summary b { display: block; font-size: 20px; letter-spacing: -.04em; }
 .import-summary span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.import-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.import-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.device-import-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.target-picker label .device-import-badges {
+  flex-direction: row;
+  gap: 4px;
+  margin-top: 4px;
+}
+.target-picker label .device-import-badges .cred-pill {
+  display: inline-flex;
+  flex-direction: row;
+  gap: 4px;
+  margin-top: 0;
+}
 .import-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .snmp-assign { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafc; }
 .snmp-assign-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

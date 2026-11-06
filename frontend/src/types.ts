@@ -676,6 +676,16 @@ export interface DudeMap {
   device_count: number
 }
 
+export interface DudeSNMPProfile {
+  source_id: string
+  name: string
+  version: string
+  port: number
+  timeout_ms: number
+  retries: number
+  has_community: boolean
+}
+
 export interface DudeDevice {
   source_id: string
   node_id: string
@@ -694,6 +704,10 @@ export interface DudeDevice {
   width: number
   height: number
   tags: string[]
+  username?: string
+  has_password?: boolean
+  snmp_profile_source_id?: string
+  snmp_profile_name?: string
 }
 
 export interface DudeLink {
@@ -705,6 +719,9 @@ export interface DudeLink {
   device_b: string
   link_type: string
   max_speed_bps: number
+  mastering_type?: number
+  master_device?: string
+  master_interface?: number
 }
 
 export interface DudeSubmap {
@@ -736,6 +753,7 @@ export interface DudePreview {
   submaps: DudeSubmap[]
   decorations: DudeDecoration[]
   links: DudeLink[]
+  snmp_profiles?: DudeSNMPProfile[]
   warnings: string[]
 }
 
