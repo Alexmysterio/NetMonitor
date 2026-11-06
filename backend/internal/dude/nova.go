@@ -298,6 +298,44 @@ func novaMAC(msg *novaMessage) string {
 	return ""
 }
 
+func parseNovaSNMPProfile(id uint32, msg *novaMessage) (SNMPProfile, bool) {
+	rawVersion, ok := msg.u32(0x3c68)
+	if !ok || rawVersion == 0xffffffff {
+		return SNMPProfile{}, false
+	}
+	version := "v3"
+	switch rawVersion {
+	case 0:
+		version = "v1"
+	case 1:
+		version = "v2c"
+	case 2:
+		version = "v3"
+	}
+	name := msg.str(0x0010)
+	if name == "" {
+		name = fmt.Sprintf("SNMP %d", id)
+	}
+	port := 161
+	if value, ok := msg.u32(0x3c6a); ok && value > 0 && value <= 65535 {
+		port = int(value)
+	}
+	timeout := 1500
+	if value, ok := msg.u32(0x3c72); ok && value > 0 && value <= 60000 {
+		timeout = int(value)
+	}
+	retries := 2
+	if value, ok := msg.u32(0x3c71); ok && value > 0 && value <= 10 {
+		retries = int(value)
+	}
+	community := msg.str(0x3c69)
+	return SNMPProfile{
+		SourceID: novaID(id), Name: name, Version: version,
+		Port: port, TimeoutMS: timeout, Retries: retries,
+		Community: community, HasCommunity: community != "",
+	}, true
+}
+
 func isNovaDevice(id uint32, msg *novaMessage) bool {
 	if !msg.hasRange(0x1f40, 0x1f5a) {
 		return false
@@ -339,6 +377,7 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 	var links []novaObject
 	deviceTypes := map[uint32]string{}
 	linkTypes := map[uint32]string{}
+	snmpProfiles := map[uint32]SNMPProfile{}
 	decoded, invalid := 0, 0
 	for rows.Next() {
 		var rawID int64
@@ -370,6 +409,10 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		case msg.hasRange(0x59d8, 0x59db):
 			if name := msg.str(0x0010); name != "" {
 				linkTypes[id] = name
+			}
+		case msg.hasRange(0x3c68, 0x3c72):
+			if profile, ok := parseNovaSNMPProfile(id, msg); ok {
+				snmpProfiles[id] = profile
 			}
 		}
 	}
@@ -480,14 +523,25 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 				notes = append(notes, text)
 			}
 		}
+		username := obj.msg.str(0x1f46)
+		password := obj.msg.str(0x1f47)
 		device := Device{
-			SourceID:   novaID(obj.id),
-			Name:       name,
-			Address:    cleanAddress(address),
-			DNSName:    dns,
-			MAC:        novaMAC(obj.msg),
-			DeviceType: normalizeType(deviceType),
-			Notes:      strings.Join(notes, " · "),
+			SourceID:    novaID(obj.id),
+			Name:        name,
+			Address:     cleanAddress(address),
+			DNSName:     dns,
+			MAC:         novaMAC(obj.msg),
+			DeviceType:  normalizeType(deviceType),
+			Notes:       strings.Join(notes, " · "),
+			Username:    username,
+			Password:    password,
+			HasPassword: password != "",
+		}
+		if profileID, ok := obj.msg.u32(0x1f4e); ok && profileID != 0xffffffff {
+			device.SNMPProfileSourceID = novaID(profileID)
+			if profile, exists := snmpProfiles[profileID]; exists {
+				device.SNMPProfileName = profile.Name
+			}
 		}
 		if nodeID, ok := firstDeviceNode[obj.id]; ok {
 			node := nodeByID[nodeID]
@@ -501,6 +555,12 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		}
 		p.Devices = append(p.Devices, device)
 	}
+	for _, profile := range snmpProfiles {
+		p.SNMPProfiles = append(p.SNMPProfiles, profile)
+	}
+	sort.Slice(p.SNMPProfiles, func(i, j int) bool {
+		return strings.ToLower(p.SNMPProfiles[i].Name) < strings.ToLower(p.SNMPProfiles[j].Name)
+	})
 
 	// Build the map hierarchy from the submap nodes. The Dude usually adds a
 	// node back to the parent map inside every child map, so a plain "referenced
@@ -699,6 +759,16 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 			DeviceB:     deviceB,
 			LinkType:    normalizeLinkType(linkTypes[linkTypeID]),
 			SpeedBps:    int64(speed),
+		}
+		masteringType, _ := obj.msg.u32(0x55f0)
+		masterDevice, hasMasterDevice := obj.msg.u32(0x55f1)
+		masterInterface, hasMasterInterface := obj.msg.u32(0x55f2)
+		link.MasteringType = int(masteringType)
+		if hasMasterDevice && masterDevice != 0xffffffff {
+			link.MasterDevice = novaID(masterDevice)
+		}
+		if hasMasterInterface && masterInterface != 0xffffffff {
+			link.MasterInterface = int(masterInterface)
 		}
 		if link.SpeedBps <= 0 {
 			link.SpeedBps = 1000000000

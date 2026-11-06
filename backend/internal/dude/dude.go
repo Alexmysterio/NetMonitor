@@ -1,8 +1,7 @@
 // Package dude parses The Dude's SQLite database and exported XML documents
 // into a neutral preview that can be reviewed before touching the inventory.
-// No credentials are imported: passwords from The Dude are intentionally
-// ignored, and the operator must assign encrypted SNMP/RouterOS credentials
-// after migration.
+// Credentials and SNMP communities are parsed into memory so the import can
+// use them, but the caller must encrypt them before persisting the preview.
 package dude
 
 import (
@@ -43,6 +42,25 @@ type Device struct {
 	Width       float64  `json:"width"`
 	Height      float64  `json:"height"`
 	Tags        []string `json:"tags"`
+
+	Username            string `json:"username"`
+	Password            string `json:"-"`
+	PasswordEncrypted   string `json:"password_encrypted,omitempty"`
+	HasPassword         bool   `json:"has_password"`
+	SNMPProfileSourceID string `json:"snmp_profile_source_id"`
+	SNMPProfileName     string `json:"snmp_profile_name"`
+}
+
+type SNMPProfile struct {
+	SourceID           string `json:"source_id"`
+	Name               string `json:"name"`
+	Version            string `json:"version"`
+	Port               int    `json:"port"`
+	TimeoutMS          int    `json:"timeout_ms"`
+	Retries            int    `json:"retries"`
+	Community          string `json:"-"`
+	CommunityEncrypted string `json:"community_encrypted,omitempty"`
+	HasCommunity       bool   `json:"has_community"`
 }
 
 type Link struct {
@@ -54,6 +72,10 @@ type Link struct {
 	DeviceB     string `json:"device_b"`
 	LinkType    string `json:"link_type"`
 	SpeedBps    int64  `json:"max_speed_bps"`
+
+	MasteringType   int    `json:"mastering_type"`
+	MasterDevice    string `json:"master_device"`
+	MasterInterface int    `json:"master_interface"`
 }
 
 type Submap struct {
@@ -78,14 +100,15 @@ type Decoration struct {
 }
 
 type Preview struct {
-	SourceKind  string       `json:"source_kind"`
-	Filename    string       `json:"filename"`
-	Maps        []Map        `json:"maps"`
-	Devices     []Device     `json:"devices"`
-	Submaps     []Submap     `json:"submaps"`
-	Decorations []Decoration `json:"decorations"`
-	Links       []Link       `json:"links"`
-	Warnings    []string     `json:"warnings"`
+	SourceKind   string        `json:"source_kind"`
+	Filename     string        `json:"filename"`
+	Maps         []Map         `json:"maps"`
+	Devices      []Device      `json:"devices"`
+	Submaps      []Submap      `json:"submaps"`
+	Decorations  []Decoration  `json:"decorations"`
+	Links        []Link        `json:"links"`
+	SNMPProfiles []SNMPProfile `json:"snmp_profiles"`
+	Warnings     []string      `json:"warnings"`
 }
 
 // MaxFileSize is the maximum The Dude export accepted for preview. The file is
@@ -142,12 +165,13 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 			return p, nil
 		}
 	}
-	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}}
+	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}, SNMPProfiles: []SNMPProfile{}}
 
 	mapTable := findTable(tables, "map", "maps", "dude_map", "maps_map")
 	deviceTable := findTable(tables, "device", "devices", "dude_device", "objects")
 	objectTable := findTable(tables, "map_object", "map_objects", "mapobject", "object", "objects")
 	linkTable := findTable(tables, "link", "links", "dude_link", "map_link")
+	snmpTable := findTable(tables, "snmp_profile", "snmp_profiles", "dude_snmp_profile", "snmp")
 	if deviceTable == "objects" && mapTable == "" {
 		deviceTable = ""
 	}
@@ -175,6 +199,14 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 			p.Maps = append(p.Maps, m)
 		}
 	}
+
+	snmpRows, err := readTable(ctx, db, snmpTable)
+	if err == nil {
+		for i, row := range snmpRows {
+			p.SNMPProfiles = append(p.SNMPProfiles, snmpProfileFromRow(row, i+1))
+		}
+	}
+
 	deviceRows, err := readTable(ctx, db, deviceTable)
 	if err != nil {
 		return Preview{}, err
@@ -198,7 +230,12 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 			DeviceType: normalizeType(text(row, "type", "device_type", "kind")),
 			Notes:      text(row, "note", "notes", "comment", "description"),
 			MapName:    text(row, "map", "map_name"),
+
+			Username:            text(row, "username", "user", "login"),
+			Password:            text(row, "password", "pass"),
+			SNMPProfileSourceID: text(row, "snmp_profile", "snmp_profile_id"),
 		}
+		d.HasPassword = d.Password != ""
 		if d.SourceID == "" {
 			d.SourceID = fmt.Sprintf("device-%d", len(p.Devices)+1)
 		}
@@ -211,6 +248,7 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 		deviceByID[id] = len(p.Devices)
 		p.Devices = append(p.Devices, d)
 	}
+	resolveSNMPProfileNames(p.Devices, p.SNMPProfiles)
 
 	if objectTable != "" {
 		rows, err := readTable(ctx, db, objectTable)
@@ -258,6 +296,10 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 				DeviceA:     a, DeviceB: b,
 				LinkType: normalizeLinkType(text(row, "type", "link_type")),
 				SpeedBps: int64(number(text(row, "speed", "max_speed", "bandwidth"))),
+
+				MasteringType:   int(number(text(row, "mastering_type", "mastering"))),
+				MasterDevice:    text(row, "master_device", "master"),
+				MasterInterface: int(number(text(row, "master_interface", "interface", "if_index"))),
 			}
 			if l.SourceID == "" {
 				l.SourceID = fmt.Sprintf("link-%d", len(p.Links)+1)
@@ -278,7 +320,7 @@ func parseXML(filename string, data []byte) (Preview, error) {
 	if err := xml.Unmarshal(data, &root); err != nil {
 		return Preview{}, fmt.Errorf("XML inválido: %w", err)
 	}
-	p := Preview{SourceKind: "xml", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}}
+	p := Preview{SourceKind: "xml", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}, SNMPProfiles: []SNMPProfile{}}
 	seen := map[string]bool{}
 	var walk func(node xmlNode, mapID string)
 	walk = func(node xmlNode, mapID string) {
@@ -322,11 +364,52 @@ func parseXML(filename string, data []byte) (Preview, error) {
 				PosY:   number(nodeValue(node, "y", "pos_y", "top")),
 				Width:  number(nodeValue(node, "width", "w")),
 				Height: number(nodeValue(node, "height", "h")),
+
+				Username:            nodeValue(node, "username", "user", "login"),
+				Password:            nodeValue(node, "password", "pass"),
+				SNMPProfileSourceID: nodeValue(node, "snmp_profile", "snmp_profile_id"),
 			}
+			d.HasPassword = d.Password != ""
 			if d.Name == "" {
 				d.Name = d.Address
 			}
 			p.Devices = append(p.Devices, d)
+		case "snmp_profile", "snmpprofile":
+			name := nodeValue(node, "name", "title")
+			version := nodeValue(node, "version", "snmp_version")
+			community := nodeValue(node, "community", "community_string", "ro_community")
+			// A bare <snmp_profile> inside a device is a reference, not a
+			// profile definition; only parse nodes that carry profile data.
+			if name == "" && version == "" && community == "" {
+				break
+			}
+			id := nodeValue(node, "id", "uuid", "source_id")
+			if id == "" {
+				id = fmt.Sprintf("snmp-%d", len(p.SNMPProfiles)+1)
+			}
+			if seen["snmp:"+id] {
+				break
+			}
+			seen["snmp:"+id] = true
+			if name == "" {
+				name = "SNMP " + id
+			}
+			profile := SNMPProfile{
+				SourceID: id, Name: name,
+				Version: normalizeSNMPVersion(version),
+				Port:    161, TimeoutMS: 1500, Retries: 2,
+				Community: community, HasCommunity: community != "",
+			}
+			if port := int(number(nodeValue(node, "port"))); port > 0 && port <= 65535 {
+				profile.Port = port
+			}
+			if timeout := int(number(nodeValue(node, "timeout", "timeout_ms"))); timeout > 0 && timeout <= 60000 {
+				profile.TimeoutMS = timeout
+			}
+			if retries := int(number(nodeValue(node, "retries", "retry"))); retries > 0 && retries <= 10 {
+				profile.Retries = retries
+			}
+			p.SNMPProfiles = append(p.SNMPProfiles, profile)
 		case "link", "enlace":
 			id := nodeValue(node, "id", "uuid")
 			if id == "" {
@@ -340,7 +423,11 @@ func parseXML(filename string, data []byte) (Preview, error) {
 			seen["link:"+id] = true
 			l := Link{SourceID: id, SourceMapID: mapID, DeviceA: a, DeviceB: b,
 				LinkType: normalizeLinkType(nodeValue(node, "type", "link_type")),
-				SpeedBps: int64(number(nodeValue(node, "speed", "max_speed", "bandwidth")))}
+				SpeedBps: int64(number(nodeValue(node, "speed", "max_speed", "bandwidth"))),
+
+				MasteringType:   int(number(nodeValue(node, "mastering_type", "mastering"))),
+				MasterDevice:    nodeValue(node, "master_device", "master"),
+				MasterInterface: int(number(nodeValue(node, "master_interface", "interface", "if_index")))}
 			if l.SpeedBps <= 0 {
 				l.SpeedBps = 1000000000
 			}
@@ -351,6 +438,7 @@ func parseXML(filename string, data []byte) (Preview, error) {
 		}
 	}
 	walk(root, "")
+	resolveSNMPProfileNames(p.Devices, p.SNMPProfiles)
 	if len(p.Maps) == 0 {
 		p.Maps = append(p.Maps, Map{SourceID: "imported", Name: "Importado desde The Dude"})
 	}
@@ -490,6 +578,66 @@ func cleanAddress(raw string) string {
 		raw = raw[:idx]
 	}
 	return strings.Trim(raw, "[]")
+}
+
+func snmpProfileFromRow(row map[string]any, index int) SNMPProfile {
+	sourceID := text(row, "id", "uuid")
+	if sourceID == "" {
+		sourceID = fmt.Sprintf("snmp-%d", index)
+	}
+	name := text(row, "name", "title")
+	if name == "" {
+		name = "SNMP " + sourceID
+	}
+	community := text(row, "community", "community_string", "ro_community")
+	profile := SNMPProfile{
+		SourceID:  sourceID,
+		Name:      name,
+		Version:   normalizeSNMPVersion(text(row, "version", "snmp_version")),
+		Port:      161,
+		TimeoutMS: 1500,
+		Retries:   2,
+		Community: community,
+	}
+	if port := int(number(text(row, "port"))); port > 0 && port <= 65535 {
+		profile.Port = port
+	}
+	if timeout := int(number(text(row, "timeout", "timeout_ms"))); timeout > 0 && timeout <= 60000 {
+		profile.TimeoutMS = timeout
+	}
+	if retries := int(number(text(row, "retries", "retry"))); retries > 0 && retries <= 10 {
+		profile.Retries = retries
+	}
+	profile.HasCommunity = profile.Community != ""
+	return profile
+}
+
+func normalizeSNMPVersion(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "v1":
+		return "v1"
+	case "2", "v2c":
+		return "v2c"
+	case "3", "v3":
+		return "v3"
+	default:
+		return "v2c"
+	}
+}
+
+func resolveSNMPProfileNames(devices []Device, profiles []SNMPProfile) {
+	for i := range devices {
+		ref := devices[i].SNMPProfileSourceID
+		if ref == "" {
+			continue
+		}
+		for _, profile := range profiles {
+			if strings.EqualFold(profile.SourceID, ref) || strings.EqualFold(profile.Name, ref) {
+				devices[i].SNMPProfileName = profile.Name
+				break
+			}
+		}
+	}
 }
 
 func normalizeType(raw string) string {

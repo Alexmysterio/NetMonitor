@@ -189,7 +189,9 @@ func TestParseDudeNovaSubmapsAndLinkLabels(t *testing.T) {
 		novaTestField{tag: 0x0010, tcode: 0x21, value: novaTestString("")},
 	)
 	linkBlob := novaTestBlob(
+		novaTestField{tag: 0x55f0, tcode: 0x08, value: novaTestU32(2)},
 		novaTestField{tag: 0x55f1, tcode: 0x08, value: novaTestU32(42)},
+		novaTestField{tag: 0x55f2, tcode: 0x08, value: novaTestU32(7)},
 		novaTestField{tag: 0x55f4, tcode: 0x08, value: novaTestU32(20)},
 		novaTestField{tag: 0x55f5, tcode: 0x08, value: novaTestU32(34)},
 		novaTestField{tag: 0x55f6, tcode: 0x08, value: novaTestU32(0xffffffff)},
@@ -247,6 +249,9 @@ func TestParseDudeNovaSubmapsAndLinkLabels(t *testing.T) {
 	if link.NodeA != "21" || link.NodeB != "22" || link.DeviceA != "" || link.DeviceB != "42" || link.SourceMapID != "20" {
 		t.Fatalf("unexpected link endpoints: %+v", link)
 	}
+	if link.MasteringType != 2 || link.MasterDevice != "42" || link.MasterInterface != 7 {
+		t.Fatalf("unexpected link mastering: %+v", link)
+	}
 }
 
 func TestParseDudeNovaSQLite(t *testing.T) {
@@ -273,12 +278,23 @@ func TestParseDudeNovaSQLite(t *testing.T) {
 	)
 	deviceBlob := novaTestBlob(
 		novaTestField{tag: 0x1f40, tcode: 0x88, value: novaTestU32Array(novaTestIPv4(10, 0, 0, 1))},
+		novaTestField{tag: 0x1f46, marker: 0x11, tcode: 0x21, value: novaTestString("admin")},
+		novaTestField{tag: 0x1f47, marker: 0x11, tcode: 0x21, value: novaTestString("secret")},
 		novaTestField{tag: 0x1f4c, tcode: 0x08, value: novaTestU32(0xffffffff)},
+		novaTestField{tag: 0x1f4e, tcode: 0x08, value: novaTestU32(60)},
 		novaTestField{tag: 0x0001, tcode: 0x08, value: novaTestU32(42)},
 		novaTestField{tag: 0x0010, tcode: 0x21, value: novaTestString("Router")},
 	)
-	if _, err := db.Exec(`INSERT INTO objs (id, obj) VALUES (?,?), (?,?), (?,?)`,
-		10, mapBlob, 11, nodeBlob, 42, deviceBlob); err != nil {
+	profileBlob := novaTestBlob(
+		novaTestField{tag: 0x3c68, tcode: 0x08, value: novaTestU32(1)},
+		novaTestField{tag: 0x3c69, marker: 0x11, tcode: 0x21, value: novaTestString("public")},
+		novaTestField{tag: 0x3c6a, tcode: 0x08, value: novaTestU32(161)},
+		novaTestField{tag: 0x3c71, tcode: 0x08, value: novaTestU32(3)},
+		novaTestField{tag: 0x3c72, marker: 0x11, tcode: 0x08, value: novaTestU32(3000)},
+		novaTestField{tag: 0x0010, tcode: 0x21, value: novaTestString("v2-public")},
+	)
+	if _, err := db.Exec(`INSERT INTO objs (id, obj) VALUES (?,?), (?,?), (?,?), (?,?)`,
+		10, mapBlob, 11, nodeBlob, 42, deviceBlob, 60, profileBlob); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -298,6 +314,21 @@ func TestParseDudeNovaSQLite(t *testing.T) {
 	d := p.Devices[0]
 	if d.Name != "Router" || d.Address != "10.0.0.1" || d.SourceMapID != "10" || d.PosX != 100 || d.PosY != 200 {
 		t.Fatalf("unexpected Nova device: %+v", d)
+	}
+	if d.Username != "admin" || d.Password != "secret" || !d.HasPassword {
+		t.Fatalf("unexpected device credentials: %+v", d)
+	}
+	if d.SNMPProfileSourceID != "60" || d.SNMPProfileName != "v2-public" {
+		t.Fatalf("unexpected device SNMP reference: %+v", d)
+	}
+	if len(p.SNMPProfiles) != 1 {
+		t.Fatalf("expected one SNMP profile, got %+v", p.SNMPProfiles)
+	}
+	profile := p.SNMPProfiles[0]
+	if profile.SourceID != "60" || profile.Name != "v2-public" || profile.Version != "v2c" ||
+		profile.Port != 161 || profile.TimeoutMS != 3000 || profile.Retries != 3 ||
+		profile.Community != "public" || !profile.HasCommunity {
+		t.Fatalf("unexpected SNMP profile: %+v", profile)
 	}
 	if p.Maps[0].Name != "Sede" || p.Maps[0].DeviceCount != 1 {
 		t.Fatalf("unexpected Nova map: %+v", p.Maps[0])
