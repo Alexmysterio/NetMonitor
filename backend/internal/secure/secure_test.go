@@ -1,6 +1,7 @@
 package secure
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 )
@@ -52,5 +53,75 @@ func TestJSONWrapperAndLegacy(t *testing.T) {
 	}
 	if got := UnwrapJSON(`{"sound":true}`); got != `{"sound":true}` {
 		t.Fatalf("legacy plaintext changed: %q", got)
+	}
+}
+
+func TestFingerprintStableForSameKeyAndValue(t *testing.T) {
+	SetKey("fingerprint-test-key")
+	first, err := Fingerprint("admin\x00secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Fingerprint("admin\x00secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("fingerprint is not deterministic: %q != %q", first, second)
+	}
+	if len(first) != 8 {
+		t.Fatalf("unexpected fingerprint length: %q", first)
+	}
+	if _, err := hex.DecodeString(first); err != nil {
+		t.Fatalf("fingerprint is not hexadecimal: %q", first)
+	}
+}
+
+func TestFingerprintDiffersByValue(t *testing.T) {
+	SetKey("fingerprint-test-key")
+	first, err := Fingerprint("admin\x00secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Fingerprint("admin\x00other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("different values produced the same fingerprint: %q", first)
+	}
+}
+
+func TestFingerprintDiffersByKey(t *testing.T) {
+	SetKey("fingerprint-key-one")
+	first, err := Fingerprint("admin\x00secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetKey("fingerprint-key-two")
+	second, err := Fingerprint("admin\x00secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("different keys produced the same fingerprint: %q", first)
+	}
+}
+
+func TestFingerprintRequiresInitialisedKey(t *testing.T) {
+	// Reset the key directly instead of using SetKey(""), which installs the
+	// development fallback key.
+	mu.Lock()
+	savedKey, savedPrevKey := key, prevKey
+	key = nil
+	prevKey = nil
+	mu.Unlock()
+	defer func() {
+		mu.Lock()
+		key, prevKey = savedKey, savedPrevKey
+		mu.Unlock()
+	}()
+	if _, err := Fingerprint("value"); err == nil {
+		t.Fatal("expected an error when the encryption key is not initialised")
 	}
 }

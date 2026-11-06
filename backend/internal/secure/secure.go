@@ -3,9 +3,11 @@ package secure
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -60,6 +62,18 @@ func previousKey() []byte {
 }
 
 func IsEncrypted(v string) bool { return strings.HasPrefix(v, prefix) }
+
+// Fingerprint returns a short deterministic keyed digest for identifiers that
+// must be stable across imports but must not reveal the original secret.
+func Fingerprint(value string) (string, error) {
+	k := currentKey()
+	if len(k) != 32 {
+		return "", fmt.Errorf("encryption key is not initialised")
+	}
+	mac := hmac.New(sha256.New, k)
+	_, _ = mac.Write([]byte(value))
+	return hex.EncodeToString(mac.Sum(nil))[:8], nil
+}
 
 func Encrypt(plain string) (string, error) {
 	if plain == "" {

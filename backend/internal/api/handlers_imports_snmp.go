@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strconv"
@@ -51,11 +50,15 @@ func dudeSNMPProfileName(p dude.SNMPProfile) string {
 }
 
 // dudeSNMPProfileHashedName is used when the base name is already taken by a
-// profile with different settings. The hash only depends on version, port and
-// community, so it is stable across imports.
-func dudeSNMPProfileHashedName(p dude.SNMPProfile) string {
-	sum := sha256.Sum256([]byte(dudeSNMPSettingsKey(p.Version, p.Port, p.Community)))
-	return dudeSNMPProfileTaggedName(p, fmt.Sprintf("#%x", sum[:4]))
+// profile with different settings. The keyed fingerprint only depends on
+// version, port and community, so it is stable across imports without exposing
+// the community to offline verification.
+func dudeSNMPProfileHashedName(p dude.SNMPProfile) (string, error) {
+	fingerprint, err := secure.Fingerprint(dudeSNMPSettingsKey(p.Version, p.Port, p.Community))
+	if err != nil {
+		return "", fmt.Errorf("calcular huella del perfil SNMP %q: %w", dudeSNMPProfileName(p), err)
+	}
+	return dudeSNMPProfileTaggedName(p, "#"+fingerprint), nil
 }
 
 func dudeSNMPProfileTaggedName(p dude.SNMPProfile, tag string) string {
@@ -80,7 +83,7 @@ func dudeSNMPProfileTaggedName(p dude.SNMPProfile, tag string) string {
 }
 
 func dudeSNMPSettingsKey(version string, port int, community string) string {
-	return version + "|" + strconv.Itoa(port) + "|" + community
+	return version + "\x00" + strconv.Itoa(port) + "\x00" + community
 }
 
 func dudeSNMPProfileKey(p dude.SNMPProfile) string {
@@ -94,18 +97,21 @@ func dudeSNMPProfileMatches(p dude.SNMPProfile, existing dudeSNMPExistingProfile
 		p.Community == existing.community
 }
 
-func dudeSNMPProfileTargetName(p dude.SNMPProfile, existing map[string]dudeSNMPExistingProfile) (string, dudeSNMPExistingProfile, bool) {
+func dudeSNMPProfileTargetName(p dude.SNMPProfile, existing map[string]dudeSNMPExistingProfile) (string, dudeSNMPExistingProfile, bool, error) {
 	base := dudeSNMPProfileName(p)
 	baseExisting, baseFound := existing[strings.ToLower(base)]
 	if !baseFound {
-		return base, dudeSNMPExistingProfile{}, false
+		return base, dudeSNMPExistingProfile{}, false, nil
 	}
 	if dudeSNMPProfileMatches(p, baseExisting) {
-		return base, baseExisting, true
+		return base, baseExisting, true, nil
 	}
-	hashed := dudeSNMPProfileHashedName(p)
+	hashed, err := dudeSNMPProfileHashedName(p)
+	if err != nil {
+		return "", dudeSNMPExistingProfile{}, false, err
+	}
 	hashedExisting, hashedFound := existing[strings.ToLower(hashed)]
-	return hashed, hashedExisting, hashedFound
+	return hashed, hashedExisting, hashedFound, nil
 }
 
 func dudeDeviceSelected(selected map[string]bool, sourceID string) bool {
@@ -230,7 +236,10 @@ func ensureDudeSNMPProfiles(ctx context.Context, tx pgx.Tx, profiles []dude.SNMP
 			continue
 		}
 
-		name, current, found := dudeSNMPProfileTargetName(p, existing)
+		name, current, found, err := dudeSNMPProfileTargetName(p, existing)
+		if err != nil {
+			return nil, 0, 0, nil, err
+		}
 		if found {
 			if dudeSNMPProfileMatches(p, current) {
 				ids[p.SourceID] = current.id

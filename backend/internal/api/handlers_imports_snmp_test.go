@@ -5,9 +5,13 @@ import (
 	"testing"
 
 	"github.com/netmonitor/netmonitor/internal/dude"
+	"github.com/netmonitor/netmonitor/internal/secure"
 )
 
 func TestDudeSNMPProfileKey(t *testing.T) {
+	if got := dudeSNMPSettingsKey("v2c", 161, "public"); got != "v2c\x00161\x00public" {
+		t.Fatalf("unexpected settings key: %q", got)
+	}
 	p := dude.SNMPProfile{Name: " v2-public ", Version: "v2c", Port: 161, Community: "public"}
 	if got := dudeSNMPProfileKey(p); got != "Dude · v2-public\x00v2c\x00161\x00public" {
 		t.Fatalf("unexpected key: %q", got)
@@ -48,13 +52,27 @@ func TestDudeSNMPProfileNameKeepsSourceIDWhenTruncated(t *testing.T) {
 }
 
 func TestDudeSNMPProfileHashedNameDiffersBySettings(t *testing.T) {
+	secure.SetKey("test-key")
 	base := dude.SNMPProfile{SourceID: "60", Name: "v2-public", Version: "v2c", Port: 161}
 	public := base
 	public.Community = "public"
 	private := base
 	private.Community = "private"
-	firstName := dudeSNMPProfileHashedName(public)
-	secondName := dudeSNMPProfileHashedName(private)
+	firstName, err := dudeSNMPProfileHashedName(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondName, err := dudeSNMPProfileHashedName(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := dudeSNMPProfileHashedName(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstName != repeated {
+		t.Fatalf("hashed name is not stable for the same key and value: %q != %q", firstName, repeated)
+	}
 	if firstName == secondName {
 		t.Fatalf("different settings produced the same name: %q", firstName)
 	}
@@ -67,9 +85,13 @@ func TestDudeSNMPProfileHashedNameDiffersBySettings(t *testing.T) {
 }
 
 func TestDudeSNMPProfileHashedNameReused(t *testing.T) {
+	secure.SetKey("test-key")
 	p := dude.SNMPProfile{SourceID: "60", Name: "v2-public", Version: "v2c", Port: 161, Community: "private"}
 	base := dudeSNMPProfileName(p)
-	hashed := dudeSNMPProfileHashedName(p)
+	hashed, err := dudeSNMPProfileHashedName(p)
+	if err != nil {
+		t.Fatal(err)
+	}
 	existing := map[string]dudeSNMPExistingProfile{
 		strings.ToLower(base): {
 			id: "conflict", name: base, version: "v2c", port: 161, community: "public", decoded: true,
@@ -78,7 +100,10 @@ func TestDudeSNMPProfileHashedNameReused(t *testing.T) {
 			id: "profile-id", name: hashed, version: "v2c", port: 161, community: "private", decoded: true,
 		},
 	}
-	name, profile, found := dudeSNMPProfileTargetName(p, existing)
+	name, profile, found, err := dudeSNMPProfileTargetName(p, existing)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !found || name != hashed || profile.id != "profile-id" || !dudeSNMPProfileMatches(p, profile) {
 		t.Fatalf("hashed profile was not reused: name=%q found=%v profile=%+v", name, found, profile)
 	}

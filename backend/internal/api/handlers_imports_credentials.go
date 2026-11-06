@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -34,6 +33,10 @@ type dudeCredentialGroup struct {
 }
 
 func dudeCredentialKey(username, password string) string {
+	return dudeCredentialSettingsKey(username, password)
+}
+
+func dudeCredentialSettingsKey(username, password string) string {
 	return username + "\x00" + password
 }
 
@@ -111,11 +114,15 @@ func dudeCredentialBaseName(g dudeCredentialGroup) string {
 }
 
 // dudeCredentialHashedName is used when the base name is already taken by a
-// profile with different credentials. The hash only depends on username and
-// password, so it is stable across imports.
-func dudeCredentialHashedName(g dudeCredentialGroup) string {
-	sum := sha256.Sum256([]byte(g.Username + "|" + g.Password))
-	return dudeCredentialTaggedName(g, fmt.Sprintf("#%x", sum[:4]))
+// profile with different credentials. The keyed fingerprint only depends on
+// username and password, so it is stable across imports without exposing the
+// password to offline verification.
+func dudeCredentialHashedName(g dudeCredentialGroup) (string, error) {
+	fingerprint, err := secure.Fingerprint(dudeCredentialSettingsKey(g.Username, g.Password))
+	if err != nil {
+		return "", fmt.Errorf("calcular huella de la credencial RouterOS de %q: %w", dudeCredentialDisplayName(dudeCredentialPrimaryDevice(g)), err)
+	}
+	return dudeCredentialTaggedName(g, "#"+fingerprint), nil
 }
 
 func dudeCredentialTaggedName(g dudeCredentialGroup, tag string) string {
@@ -157,18 +164,21 @@ func dudeRouterOSCredentialMatches(g dudeCredentialGroup, existing dudeRouterOSE
 // dudeCredentialTargetName chooses between the base and hashed name for a
 // group. It returns the existing profile when the chosen name is already in
 // use, so the caller can reuse it or report a conflict.
-func dudeCredentialTargetName(g dudeCredentialGroup, existing map[string]dudeRouterOSExistingCredential) (string, dudeRouterOSExistingCredential, bool) {
+func dudeCredentialTargetName(g dudeCredentialGroup, existing map[string]dudeRouterOSExistingCredential) (string, dudeRouterOSExistingCredential, bool, error) {
 	base := dudeCredentialBaseName(g)
 	baseExisting, baseFound := existing[strings.ToLower(base)]
 	if !baseFound {
-		return base, dudeRouterOSExistingCredential{}, false
+		return base, dudeRouterOSExistingCredential{}, false, nil
 	}
 	if dudeRouterOSCredentialMatches(g, baseExisting) {
-		return base, baseExisting, true
+		return base, baseExisting, true, nil
 	}
-	hashed := dudeCredentialHashedName(g)
+	hashed, err := dudeCredentialHashedName(g)
+	if err != nil {
+		return "", dudeRouterOSExistingCredential{}, false, err
+	}
 	hashedExisting, hashedFound := existing[strings.ToLower(hashed)]
-	return hashed, hashedExisting, hashedFound
+	return hashed, hashedExisting, hashedFound, nil
 }
 
 func dudeCredentialUniqueViolation(err error) bool {
@@ -273,7 +283,10 @@ func ensureDudeRouterOSCredentials(ctx context.Context, tx pgx.Tx, groups []dude
 		if credentialID != "" {
 			reused++
 		} else {
-			name, current, found := dudeCredentialTargetName(group, existingByName)
+			name, current, found, targetErr := dudeCredentialTargetName(group, existingByName)
+			if targetErr != nil {
+				return 0, 0, 0, 0, nil, targetErr
+			}
 			if found {
 				if !dudeRouterOSCredentialMatches(group, current) {
 					return 0, 0, 0, 0, nil, fmt.Errorf("el perfil RouterOS %q ya existe con otras credenciales", name)

@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/netmonitor/netmonitor/internal/secure"
 )
 
 func TestDudeCredentialKey(t *testing.T) {
@@ -20,6 +22,9 @@ func TestDudeCredentialKey(t *testing.T) {
 	for _, tc := range cases {
 		if got := dudeCredentialKey(tc.username, tc.password); got != tc.want {
 			t.Fatalf("dudeCredentialKey(%q, %q) = %q, want %q", tc.username, tc.password, got, tc.want)
+		}
+		if got := dudeCredentialSettingsKey(tc.username, tc.password); got != tc.want {
+			t.Fatalf("dudeCredentialSettingsKey(%q, %q) = %q, want %q", tc.username, tc.password, got, tc.want)
 		}
 	}
 }
@@ -136,6 +141,7 @@ func TestDudeCredentialNameKeepsSourceIDWhenTruncated(t *testing.T) {
 }
 
 func TestDudeCredentialHashedNameDiffersByCredentials(t *testing.T) {
+	secure.SetKey("test-key")
 	public := dudeCredentialGroup{
 		Username: "admin",
 		Password: "public",
@@ -144,13 +150,23 @@ func TestDudeCredentialHashedNameDiffersByCredentials(t *testing.T) {
 	private := public
 	private.Password = "private"
 
-	firstName := dudeCredentialHashedName(public)
-	secondName := dudeCredentialHashedName(private)
+	firstName, err := dudeCredentialHashedName(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondName, err := dudeCredentialHashedName(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := dudeCredentialHashedName(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstName != repeated {
+		t.Fatalf("hashed name is not stable for the same key and value: %q != %q", firstName, repeated)
+	}
 	if firstName == secondName {
 		t.Fatalf("different credentials produced the same hashed name: %q", firstName)
-	}
-	if firstName != dudeCredentialHashedName(public) {
-		t.Fatalf("hashed name is not deterministic: %q", firstName)
 	}
 	if !strings.Contains(firstName, " #") || !strings.HasSuffix(firstName, " [60]") {
 		t.Fatalf("unexpected hashed name: %q", firstName)
@@ -161,13 +177,17 @@ func TestDudeCredentialHashedNameDiffersByCredentials(t *testing.T) {
 }
 
 func TestDudeCredentialHashedNameReused(t *testing.T) {
+	secure.SetKey("test-key")
 	group := dudeCredentialGroup{
 		Username: "admin",
 		Password: "private",
 		Devices:  []dudeCredentialDevice{{SourceID: "60", DeviceName: "RouterOS Edge"}},
 	}
 	base := dudeCredentialBaseName(group)
-	hashed := dudeCredentialHashedName(group)
+	hashed, err := dudeCredentialHashedName(group)
+	if err != nil {
+		t.Fatal(err)
+	}
 	existing := map[string]dudeRouterOSExistingCredential{
 		strings.ToLower(base): {
 			id: "conflict", name: base, username: "admin", password: "public", decoded: true,
@@ -176,7 +196,10 @@ func TestDudeCredentialHashedNameReused(t *testing.T) {
 			id: "profile-id", name: hashed, username: "admin", password: "private", decoded: true,
 		},
 	}
-	name, profile, found := dudeCredentialTargetName(group, existing)
+	name, profile, found, err := dudeCredentialTargetName(group, existing)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !found || name != hashed || profile.id != "profile-id" {
 		t.Fatalf("hashed profile was not reused: name=%q found=%v profile=%+v", name, found, profile)
 	}
@@ -197,7 +220,10 @@ func TestDudeCredentialBaseNameReused(t *testing.T) {
 			id: "profile-id", name: base, username: "admin", password: "secret", decoded: true,
 		},
 	}
-	name, profile, found := dudeCredentialTargetName(group, existing)
+	name, profile, found, err := dudeCredentialTargetName(group, existing)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !found || name != base || profile.id != "profile-id" {
 		t.Fatalf("base profile was not reused: name=%q found=%v profile=%+v", name, found, profile)
 	}
