@@ -523,10 +523,12 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 			deviceTypesAssigned++
 		}
 		if profileID := snmpAssignments[d.SourceID]; profileID != "" {
+			// Automatic Dude SNMP assignments never replace an existing profile;
+			// only a manual preview override may overwrite it.
 			manual := manualSNMP[d.SourceID] != ""
 			var ct pgconn.CommandTag
 			var err error
-			if manual || overwriteCredentials {
+			if manual {
 				ct, err = tx.Exec(ctx, `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1`, deviceID, profileID)
 			} else {
 				ct, err = tx.Exec(ctx, `UPDATE devices SET snmp_profile_id=$2 WHERE id=$1 AND snmp_profile_id IS NULL`, deviceID, profileID)
