@@ -138,19 +138,17 @@ func (s *Server) getDudeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var preview dude.Preview
-	var previewObj any
-	if err := json.Unmarshal([]byte(payload), &preview); err == nil {
-		sanitizeDudePreview(&preview)
-		previewObj = preview
-	} else {
-		_ = json.Unmarshal([]byte(payload), &previewObj)
+	if err := json.Unmarshal([]byte(payload), &preview); err != nil {
+		writeError(w, http.StatusInternalServerError, "el preview guardado está dañado")
+		return
 	}
+	sanitizeDudePreview(&preview)
 	var warningsObj, resultObj any
 	_ = json.Unmarshal([]byte(warnings), &warningsObj)
 	_ = json.Unmarshal([]byte(result), &resultObj)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
 		"id": id, "filename": filename, "source_kind": kind, "status": status,
-		"preview": previewObj, "warnings": warningsObj, "result": resultObj,
+		"preview": preview, "warnings": warningsObj, "result": resultObj,
 		"created_at": created, "applied_at": applied,
 	}})
 }
