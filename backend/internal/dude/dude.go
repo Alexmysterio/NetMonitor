@@ -171,7 +171,7 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 	deviceTable := findTable(tables, "device", "devices", "dude_device", "objects")
 	objectTable := findTable(tables, "map_object", "map_objects", "mapobject", "object", "objects")
 	linkTable := findTable(tables, "link", "links", "dude_link", "map_link")
-	snmpTable := findTable(tables, "snmp_profile", "snmp_profiles", "dude_snmp_profile", "snmp")
+	snmpTable := findTable(tables, "snmp_profile", "snmp_profiles", "dude_snmp_profile")
 	if deviceTable == "objects" && mapTable == "" {
 		deviceTable = ""
 	}
@@ -205,6 +205,7 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 		for i, row := range snmpRows {
 			p.SNMPProfiles = append(p.SNMPProfiles, snmpProfileFromRow(row, i+1))
 		}
+		sortSNMPProfiles(p.SNMPProfiles)
 	}
 
 	deviceRows, err := readTable(ctx, db, deviceTable)
@@ -231,8 +232,8 @@ func parseSQLite(ctx context.Context, filename string, data []byte) (Preview, er
 			Notes:      text(row, "note", "notes", "comment", "description"),
 			MapName:    text(row, "map", "map_name"),
 
-			Username:            text(row, "username", "user", "login"),
-			Password:            text(row, "password", "pass"),
+			Username:            rawText(row, "username", "user", "login"),
+			Password:            rawText(row, "password", "pass"),
 			SNMPProfileSourceID: text(row, "snmp_profile", "snmp_profile_id"),
 		}
 		d.HasPassword = d.Password != ""
@@ -365,9 +366,9 @@ func parseXML(filename string, data []byte) (Preview, error) {
 				Width:  number(nodeValue(node, "width", "w")),
 				Height: number(nodeValue(node, "height", "h")),
 
-				Username:            nodeValue(node, "username", "user", "login"),
-				Password:            nodeValue(node, "password", "pass"),
-				SNMPProfileSourceID: nodeValue(node, "snmp_profile", "snmp_profile_id"),
+				Username:            rawNodeValue(node, "username", "user", "login"),
+				Password:            rawNodeValue(node, "password", "pass"),
+				SNMPProfileSourceID: nodeReference(node, "snmp_profile", "snmp_profile_id"),
 			}
 			d.HasPassword = d.Password != ""
 			if d.Name == "" {
@@ -377,7 +378,7 @@ func parseXML(filename string, data []byte) (Preview, error) {
 		case "snmp_profile", "snmpprofile":
 			name := nodeValue(node, "name", "title")
 			version := nodeValue(node, "version", "snmp_version")
-			community := nodeValue(node, "community", "community_string", "ro_community")
+			community := rawNodeValue(node, "community", "community_string", "ro_community")
 			// A bare <snmp_profile> inside a device is a reference, not a
 			// profile definition; only parse nodes that carry profile data.
 			if name == "" && version == "" && community == "" {
@@ -406,8 +407,10 @@ func parseXML(filename string, data []byte) (Preview, error) {
 			if timeout := int(number(nodeValue(node, "timeout", "timeout_ms"))); timeout > 0 && timeout <= 60000 {
 				profile.TimeoutMS = timeout
 			}
-			if retries := int(number(nodeValue(node, "retries", "retry"))); retries > 0 && retries <= 10 {
-				profile.Retries = retries
+			if raw := nodeValue(node, "retries", "retry"); raw != "" {
+				if retries := int(number(raw)); retries >= 0 && retries <= 10 {
+					profile.Retries = retries
+				}
 			}
 			p.SNMPProfiles = append(p.SNMPProfiles, profile)
 		case "link", "enlace":
@@ -438,6 +441,7 @@ func parseXML(filename string, data []byte) (Preview, error) {
 		}
 	}
 	walk(root, "")
+	sortSNMPProfiles(p.SNMPProfiles)
 	resolveSNMPProfileNames(p.Devices, p.SNMPProfiles)
 	if len(p.Maps) == 0 {
 		p.Maps = append(p.Maps, Map{SourceID: "imported", Name: "Importado desde The Dude"})
@@ -466,6 +470,28 @@ type xmlNode struct {
 }
 
 func nodeValue(node xmlNode, keys ...string) string {
+	return strings.TrimSpace(rawNodeValue(node, keys...))
+}
+
+func rawNodeValue(node xmlNode, keys ...string) string {
+	for _, key := range keys {
+		for _, attr := range node.Attr {
+			if strings.EqualFold(attr.Name.Local, key) {
+				return attr.Value
+			}
+		}
+		for _, child := range node.Nodes {
+			if strings.EqualFold(child.XMLName.Local, key) {
+				return child.Text
+			}
+		}
+	}
+	return ""
+}
+
+// nodeReference returns the target of a reference element such as
+// <snmp_profile id="60"/>, falling back to its trimmed text.
+func nodeReference(node xmlNode, keys ...string) string {
 	for _, key := range keys {
 		for _, attr := range node.Attr {
 			if strings.EqualFold(attr.Name.Local, key) {
@@ -473,8 +499,20 @@ func nodeValue(node xmlNode, keys ...string) string {
 			}
 		}
 		for _, child := range node.Nodes {
-			if strings.EqualFold(child.XMLName.Local, key) {
-				return strings.TrimSpace(child.Text)
+			if !strings.EqualFold(child.XMLName.Local, key) {
+				continue
+			}
+			for _, idKey := range []string{"id", "source_id", "uuid"} {
+				for _, attr := range child.Attr {
+					if strings.EqualFold(attr.Name.Local, idKey) {
+						if value := strings.TrimSpace(attr.Value); value != "" {
+							return value
+						}
+					}
+				}
+			}
+			if value := strings.TrimSpace(child.Text); value != "" {
+				return value
 			}
 		}
 	}
@@ -541,19 +579,23 @@ func readTable(ctx context.Context, db *sql.DB, table string) ([]map[string]any,
 }
 
 func text(row map[string]any, keys ...string) string {
+	return strings.TrimSpace(rawText(row, keys...))
+}
+
+func rawText(row map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := row[key]; ok && value != nil {
 			switch v := value.(type) {
 			case []byte:
-				return strings.TrimSpace(string(v))
+				return string(v)
 			case string:
-				return strings.TrimSpace(v)
+				return v
 			case int64:
 				return strconv.FormatInt(v, 10)
 			case float64:
 				return strconv.FormatFloat(v, 'f', -1, 64)
 			default:
-				return strings.TrimSpace(fmt.Sprint(v))
+				return fmt.Sprint(v)
 			}
 		}
 	}
@@ -589,7 +631,7 @@ func snmpProfileFromRow(row map[string]any, index int) SNMPProfile {
 	if name == "" {
 		name = "SNMP " + sourceID
 	}
-	community := text(row, "community", "community_string", "ro_community")
+	community := rawText(row, "community", "community_string", "ro_community")
 	profile := SNMPProfile{
 		SourceID:  sourceID,
 		Name:      name,
@@ -605,11 +647,23 @@ func snmpProfileFromRow(row map[string]any, index int) SNMPProfile {
 	if timeout := int(number(text(row, "timeout", "timeout_ms"))); timeout > 0 && timeout <= 60000 {
 		profile.TimeoutMS = timeout
 	}
-	if retries := int(number(text(row, "retries", "retry"))); retries > 0 && retries <= 10 {
-		profile.Retries = retries
+	if raw := text(row, "retries", "retry"); raw != "" {
+		if retries := int(number(raw)); retries >= 0 && retries <= 10 {
+			profile.Retries = retries
+		}
 	}
 	profile.HasCommunity = profile.Community != ""
 	return profile
+}
+
+func sortSNMPProfiles(profiles []SNMPProfile) {
+	sort.Slice(profiles, func(i, j int) bool {
+		left, right := strings.ToLower(profiles[i].Name), strings.ToLower(profiles[j].Name)
+		if left == right {
+			return profiles[i].SourceID < profiles[j].SourceID
+		}
+		return left < right
+	})
 }
 
 func normalizeSNMPVersion(raw string) string {
@@ -631,8 +685,19 @@ func resolveSNMPProfileNames(devices []Device, profiles []SNMPProfile) {
 		if ref == "" {
 			continue
 		}
+		found := false
 		for _, profile := range profiles {
-			if strings.EqualFold(profile.SourceID, ref) || strings.EqualFold(profile.Name, ref) {
+			if strings.EqualFold(profile.SourceID, ref) {
+				devices[i].SNMPProfileName = profile.Name
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		for _, profile := range profiles {
+			if strings.EqualFold(profile.Name, ref) {
 				devices[i].SNMPProfileName = profile.Name
 				break
 			}

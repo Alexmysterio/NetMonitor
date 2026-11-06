@@ -231,11 +231,15 @@ func (m *novaMessage) u64(tag uint16) (uint64, bool) {
 }
 
 func (m *novaMessage) str(tag uint16) string {
+	return strings.TrimSpace(m.rawStr(tag))
+}
+
+func (m *novaMessage) rawStr(tag uint16) string {
 	value, ok := m.field(tag)
 	if !ok || value.kind != novaStr {
 		return ""
 	}
-	return strings.TrimSpace(value.strV)
+	return value.strV
 }
 
 func (m *novaMessage) u32s(tag uint16) []uint32 {
@@ -325,10 +329,10 @@ func parseNovaSNMPProfile(id uint32, msg *novaMessage) (SNMPProfile, bool) {
 		timeout = int(value)
 	}
 	retries := 2
-	if value, ok := msg.u32(0x3c71); ok && value > 0 && value <= 10 {
+	if value, ok := msg.u32(0x3c71); ok && value <= 10 {
 		retries = int(value)
 	}
-	community := msg.str(0x3c69)
+	community := msg.rawStr(0x3c69)
 	return SNMPProfile{
 		SourceID: novaID(id), Name: name, Version: version,
 		Port: port, TimeoutMS: timeout, Retries: retries,
@@ -426,7 +430,7 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		return Preview{}, false, nil
 	}
 
-	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}}
+	p := Preview{SourceKind: "sqlite", Filename: filename, Maps: []Map{}, Devices: []Device{}, Submaps: []Submap{}, Decorations: []Decoration{}, Links: []Link{}, SNMPProfiles: []SNMPProfile{}}
 	for _, obj := range maps {
 		name := obj.msg.str(0x0010)
 		if name == "" {
@@ -523,8 +527,8 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 				notes = append(notes, text)
 			}
 		}
-		username := obj.msg.str(0x1f46)
-		password := obj.msg.str(0x1f47)
+		username := obj.msg.rawStr(0x1f46)
+		password := obj.msg.rawStr(0x1f47)
 		device := Device{
 			SourceID:    novaID(obj.id),
 			Name:        name,
@@ -558,9 +562,7 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 	for _, profile := range snmpProfiles {
 		p.SNMPProfiles = append(p.SNMPProfiles, profile)
 	}
-	sort.Slice(p.SNMPProfiles, func(i, j int) bool {
-		return strings.ToLower(p.SNMPProfiles[i].Name) < strings.ToLower(p.SNMPProfiles[j].Name)
-	})
+	sortSNMPProfiles(p.SNMPProfiles)
 
 	// Build the map hierarchy from the submap nodes. The Dude usually adds a
 	// node back to the parent map inside every child map, so a plain "referenced
@@ -763,7 +765,9 @@ func parseNovaSQLite(ctx context.Context, filename string, db *sql.DB, objsTable
 		masteringType, _ := obj.msg.u32(0x55f0)
 		masterDevice, hasMasterDevice := obj.msg.u32(0x55f1)
 		masterInterface, hasMasterInterface := obj.msg.u32(0x55f2)
-		link.MasteringType = int(masteringType)
+		if masteringType != 0xffffffff {
+			link.MasteringType = int(masteringType)
+		}
 		if hasMasterDevice && masterDevice != 0xffffffff {
 			link.MasterDevice = novaID(masterDevice)
 		}

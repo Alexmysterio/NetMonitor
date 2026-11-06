@@ -27,6 +27,9 @@ func TestParseXML(t *testing.T) {
 	if p.SourceKind != "xml" || len(p.Maps) != 1 || len(p.Devices) != 2 || len(p.Links) != 1 {
 		t.Fatalf("unexpected preview: %+v", p)
 	}
+	if p.SNMPProfiles == nil {
+		t.Fatal("SNMP profiles should be an empty slice, not nil")
+	}
 	if p.Devices[0].SourceMapID != "m1" || p.Devices[0].DeviceType != "access_point" {
 		t.Fatalf("device map/type not parsed: %+v", p.Devices[0])
 	}
@@ -69,10 +72,144 @@ func TestParseSQLite(t *testing.T) {
 	if p.SourceKind != "sqlite" || len(p.Maps) != 1 || len(p.Devices) != 2 || len(p.Links) != 1 {
 		t.Fatalf("unexpected preview: %+v", p)
 	}
+	if p.SNMPProfiles == nil {
+		t.Fatal("SNMP profiles should be an empty slice, not nil")
+	}
 	for _, d := range p.Devices {
 		if d.SourceID == "d1" && (d.PosX != 12 || d.PosY != 34 || d.SourceMapID != "m1") {
 			t.Fatalf("coordinates not parsed: %+v", d)
 		}
+	}
+}
+
+func TestParseSQLiteCredentialsAndSNMP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dude.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE device (id TEXT PRIMARY KEY, name TEXT, address TEXT, type TEXT, username TEXT, password TEXT, snmp_profile TEXT)`,
+		`CREATE TABLE snmp_profile (id TEXT PRIMARY KEY, name TEXT, version TEXT, port INTEGER, timeout_ms INTEGER, retries INTEGER, community TEXT)`,
+		`CREATE TABLE link (id TEXT PRIMARY KEY, map TEXT, device1 TEXT, device2 TEXT, type TEXT, speed INTEGER, mastering_type INTEGER, master_device TEXT, master_interface INTEGER)`,
+		`INSERT INTO device VALUES ('d1','Router','10.0.0.1','router',' admin ',' secret ','p1')`,
+		`INSERT INTO device VALUES ('d2','Switch','10.0.0.2','switch','','','Shared')`,
+		// p2 intentionally shares its name with p1's source ID to exercise
+		// source-ID-first resolution. Its missing columns exercise defaults.
+		`INSERT INTO snmp_profile VALUES ('p1','Shared','3',1161,2500,4,' public ')`,
+		`INSERT INTO snmp_profile (id,name) VALUES ('p2','p1')`,
+		`INSERT INTO link VALUES ('l1','map-1','d1','d2','ethernet',1000000000,2,'d1',7)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(context.Background(), "dude.db", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SNMPProfiles == nil || len(p.SNMPProfiles) != 2 {
+		t.Fatalf("unexpected SNMP profiles: %+v", p.SNMPProfiles)
+	}
+	if p.SNMPProfiles[0].SourceID != "p2" || p.SNMPProfiles[1].SourceID != "p1" {
+		t.Fatalf("SNMP profiles are not sorted by name: %+v", p.SNMPProfiles)
+	}
+	defaults := p.SNMPProfiles[0]
+	if defaults.Name != "p1" || defaults.Version != "v2c" || defaults.Port != 161 ||
+		defaults.TimeoutMS != 1500 || defaults.Retries != 2 || defaults.HasCommunity ||
+		defaults.Community != "" {
+		t.Fatalf("unexpected SNMP defaults: %+v", defaults)
+	}
+	custom := p.SNMPProfiles[1]
+	if custom.Name != "Shared" || custom.Version != "v3" || custom.Port != 1161 ||
+		custom.TimeoutMS != 2500 || custom.Retries != 4 || !custom.HasCommunity ||
+		custom.Community != " public " {
+		t.Fatalf("unexpected custom SNMP profile: %+v", custom)
+	}
+	devices := map[string]Device{}
+	for _, d := range p.Devices {
+		devices[d.SourceID] = d
+	}
+	router := devices["d1"]
+	if router.Username != " admin " || router.Password != " secret " || !router.HasPassword {
+		t.Fatalf("unexpected legacy credentials: %+v", router)
+	}
+	if router.SNMPProfileSourceID != "p1" || router.SNMPProfileName != "Shared" {
+		t.Fatalf("unexpected source-ID SNMP resolution: %+v", router)
+	}
+	switchDevice := devices["d2"]
+	if switchDevice.SNMPProfileSourceID != "Shared" || switchDevice.SNMPProfileName != "Shared" {
+		t.Fatalf("unexpected name SNMP resolution: %+v", switchDevice)
+	}
+	if len(p.Links) != 1 {
+		t.Fatalf("unexpected links: %+v", p.Links)
+	}
+	link := p.Links[0]
+	if link.MasteringType != 2 || link.MasterDevice != "d1" || link.MasterInterface != 7 {
+		t.Fatalf("unexpected link mastering: %+v", link)
+	}
+}
+
+func TestParseXMLCredentialsAndSNMP(t *testing.T) {
+	xmlData := []byte(`<dude>
+  <snmp_profile id="61" name="Alpha" version="1" />
+  <snmp_profile id="60" name="v2-public" version="2" port="1161" timeout="3000" retries="0">
+    <community> public </community>
+  </snmp_profile>
+  <device id="d1" name="Router" address="10.0.0.1">
+    <username> admin </username>
+    <password> secret </password>
+    <snmp_profile id="60"/>
+  </device>
+  <link id="l1" device1="d1" device2="d2" mastering_type="2">
+    <master_device>d1</master_device>
+    <master_interface>7</master_interface>
+  </link>
+</dude>`)
+	p, err := Parse(context.Background(), "dude.xml", xmlData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SNMPProfiles == nil || len(p.SNMPProfiles) != 2 {
+		t.Fatalf("bare nested reference created a profile: %+v", p.SNMPProfiles)
+	}
+	if p.SNMPProfiles[0].SourceID != "61" || p.SNMPProfiles[1].SourceID != "60" {
+		t.Fatalf("SNMP profiles are not sorted by name: %+v", p.SNMPProfiles)
+	}
+	xmlDefaults := p.SNMPProfiles[0]
+	if xmlDefaults.Name != "Alpha" || xmlDefaults.Version != "v1" || xmlDefaults.Port != 161 ||
+		xmlDefaults.TimeoutMS != 1500 || xmlDefaults.Retries != 2 || xmlDefaults.HasCommunity {
+		t.Fatalf("unexpected XML SNMP defaults: %+v", xmlDefaults)
+	}
+	profile := p.SNMPProfiles[1]
+	if profile.SourceID != "60" || profile.Name != "v2-public" || profile.Version != "v2c" ||
+		profile.Port != 1161 || profile.TimeoutMS != 3000 || profile.Retries != 0 ||
+		profile.Community != " public " || !profile.HasCommunity {
+		t.Fatalf("unexpected XML SNMP profile: %+v", profile)
+	}
+	if len(p.Devices) != 1 {
+		t.Fatalf("unexpected devices: %+v", p.Devices)
+	}
+	d := p.Devices[0]
+	if d.Username != " admin " || d.Password != " secret " || !d.HasPassword {
+		t.Fatalf("unexpected XML credentials: %+v", d)
+	}
+	if d.SNMPProfileSourceID != "60" || d.SNMPProfileName != "v2-public" {
+		t.Fatalf("nested SNMP reference not resolved: %+v", d)
+	}
+	if len(p.Links) != 1 {
+		t.Fatalf("unexpected links: %+v", p.Links)
+	}
+	link := p.Links[0]
+	if link.MasteringType != 2 || link.MasterDevice != "d1" || link.MasterInterface != 7 {
+		t.Fatalf("unexpected XML link mastering: %+v", link)
 	}
 }
 
@@ -141,6 +278,30 @@ func TestDecodeNovaMarker11(t *testing.T) {
 	}
 	if name := msg.str(0x0010); name != "v2-public" {
 		t.Fatalf("unexpected name: %q", name)
+	}
+}
+
+func TestParseNovaSNMPProfileDefaultsAndZeroRetries(t *testing.T) {
+	decode := func(fields ...novaTestField) *novaMessage {
+		msg, ok := decodeNova(novaTestBlob(fields...))
+		if !ok {
+			t.Fatal("blob was not decoded")
+		}
+		return msg
+	}
+	zeroRetries := decode(
+		novaTestField{tag: 0x3c68, tcode: 0x08, value: novaTestU32(1)},
+		novaTestField{tag: 0x3c71, tcode: 0x08, value: novaTestU32(0)},
+		novaTestField{tag: 0x3c72, tcode: 0x08, value: novaTestU32(0)},
+	)
+	profile, ok := parseNovaSNMPProfile(60, zeroRetries)
+	if !ok || profile.Retries != 0 || profile.TimeoutMS != 1500 {
+		t.Fatalf("unexpected zero retries/timeout handling: %+v, ok=%v", profile, ok)
+	}
+	absent := decode(novaTestField{tag: 0x3c68, tcode: 0x08, value: novaTestU32(1)})
+	profile, ok = parseNovaSNMPProfile(61, absent)
+	if !ok || profile.Retries != 2 || profile.TimeoutMS != 1500 || profile.Port != 161 {
+		t.Fatalf("unexpected default handling: %+v, ok=%v", profile, ok)
 	}
 }
 
@@ -240,6 +401,9 @@ func TestParseDudeNovaSubmapsAndLinkLabels(t *testing.T) {
 	if len(p.Devices) != 2 || len(p.Submaps) != 3 || len(p.Decorations) != 0 || len(p.Links) != 1 {
 		t.Fatalf("unexpected preview: devices=%d submaps=%d decorations=%d links=%d", len(p.Devices), len(p.Submaps), len(p.Decorations), len(p.Links))
 	}
+	if p.SNMPProfiles == nil {
+		t.Fatal("SNMP profiles should be an empty slice, not nil")
+	}
 	for _, submap := range p.Submaps {
 		if submap.SourceID == "34" {
 			t.Fatalf("link label imported as submap: %+v", submap)
@@ -278,8 +442,8 @@ func TestParseDudeNovaSQLite(t *testing.T) {
 	)
 	deviceBlob := novaTestBlob(
 		novaTestField{tag: 0x1f40, tcode: 0x88, value: novaTestU32Array(novaTestIPv4(10, 0, 0, 1))},
-		novaTestField{tag: 0x1f46, marker: 0x11, tcode: 0x21, value: novaTestString("admin")},
-		novaTestField{tag: 0x1f47, marker: 0x11, tcode: 0x21, value: novaTestString("secret")},
+		novaTestField{tag: 0x1f46, marker: 0x11, tcode: 0x21, value: novaTestString(" admin ")},
+		novaTestField{tag: 0x1f47, marker: 0x11, tcode: 0x21, value: novaTestString(" secret ")},
 		novaTestField{tag: 0x1f4c, tcode: 0x08, value: novaTestU32(0xffffffff)},
 		novaTestField{tag: 0x1f4e, tcode: 0x08, value: novaTestU32(60)},
 		novaTestField{tag: 0x0001, tcode: 0x08, value: novaTestU32(42)},
@@ -287,8 +451,8 @@ func TestParseDudeNovaSQLite(t *testing.T) {
 	)
 	profileBlob := novaTestBlob(
 		novaTestField{tag: 0x3c68, tcode: 0x08, value: novaTestU32(1)},
-		novaTestField{tag: 0x3c69, marker: 0x11, tcode: 0x21, value: novaTestString("public")},
-		novaTestField{tag: 0x3c6a, tcode: 0x08, value: novaTestU32(161)},
+		novaTestField{tag: 0x3c69, marker: 0x11, tcode: 0x21, value: novaTestString(" public ")},
+		novaTestField{tag: 0x3c6a, tcode: 0x08, value: novaTestU32(1161)},
 		novaTestField{tag: 0x3c71, tcode: 0x08, value: novaTestU32(3)},
 		novaTestField{tag: 0x3c72, marker: 0x11, tcode: 0x08, value: novaTestU32(3000)},
 		novaTestField{tag: 0x0010, tcode: 0x21, value: novaTestString("v2-public")},
@@ -315,7 +479,7 @@ func TestParseDudeNovaSQLite(t *testing.T) {
 	if d.Name != "Router" || d.Address != "10.0.0.1" || d.SourceMapID != "10" || d.PosX != 100 || d.PosY != 200 {
 		t.Fatalf("unexpected Nova device: %+v", d)
 	}
-	if d.Username != "admin" || d.Password != "secret" || !d.HasPassword {
+	if d.Username != " admin " || d.Password != " secret " || !d.HasPassword {
 		t.Fatalf("unexpected device credentials: %+v", d)
 	}
 	if d.SNMPProfileSourceID != "60" || d.SNMPProfileName != "v2-public" {
@@ -326,8 +490,8 @@ func TestParseDudeNovaSQLite(t *testing.T) {
 	}
 	profile := p.SNMPProfiles[0]
 	if profile.SourceID != "60" || profile.Name != "v2-public" || profile.Version != "v2c" ||
-		profile.Port != 161 || profile.TimeoutMS != 3000 || profile.Retries != 3 ||
-		profile.Community != "public" || !profile.HasCommunity {
+		profile.Port != 1161 || profile.TimeoutMS != 3000 || profile.Retries != 3 ||
+		profile.Community != " public " || !profile.HasCommunity {
 		t.Fatalf("unexpected SNMP profile: %+v", profile)
 	}
 	if p.Maps[0].Name != "Sede" || p.Maps[0].DeviceCount != 1 {
