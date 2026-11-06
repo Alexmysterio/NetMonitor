@@ -79,3 +79,24 @@ func TestDudeLinkMonitoring(t *testing.T) {
 		})
 	}
 }
+
+func TestDudeLinkHasMasterInterface(t *testing.T) {
+	tests := []struct {
+		name string
+		link dude.Link
+		want bool
+	}{
+		{name: "zero", link: dude.Link{}, want: false},
+		{name: "positive", link: dude.Link{MasterInterface: 7}, want: true},
+		{name: "negative", link: dude.Link{MasterInterface: -1}, want: false},
+		{name: "sentinel", link: dude.Link{MasterInterface: int(^uint32(0))}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := dudeLinkHasMasterInterface(tt.link); got != tt.want {
+				t.Fatalf("dudeLinkHasMasterInterface(%+v) = %v, want %v", tt.link, got, tt.want)
+			}
+		})
+	}
+}

@@ -815,7 +815,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 				if mastering == "snmp" {
 					monitoredLinks++
 				}
-				if assignLinkMonitoring && l.MasterInterface > 0 && l.MasterDevice != "" && deviceIDs[l.MasterDevice] == "" {
+				if assignLinkMonitoring && dudeLinkHasMasterInterface(l) && l.MasterDevice != "" && deviceIDs[l.MasterDevice] == "" {
 					missingLinkMasters++
 				}
 			}
@@ -864,9 +864,13 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+func dudeLinkHasMasterInterface(link dude.Link) bool {
+	return link.MasterInterface > 0 && int64(link.MasterInterface) < 0xffffffff
+}
+
 func dudeLinkMonitoring(link dude.Link, deviceIDs map[string]string, enabled bool) (mastering, masterDeviceID string, ifIndex int) {
 	mastering = "simple"
-	if !enabled || link.MasterInterface <= 0 || int64(link.MasterInterface) >= 0xffffffff || link.MasterDevice == "" {
+	if !enabled || !dudeLinkHasMasterInterface(link) || link.MasterDevice == "" {
 		return
 	}
 	deviceID := deviceIDs[link.MasterDevice]
