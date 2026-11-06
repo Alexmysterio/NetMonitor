@@ -440,7 +440,7 @@ Cada equipo tiene una sección **Accesos** con credenciales independientes para 
 
 En **Accesos → Winbox** puedes abrir Winbox con el usuario y la contraseña del equipo. El navegador solo recibe un ticket de un solo uso (90 segundos); el puente local canjea el ticket contra NetMonitor y ejecuta `winbox.exe` con las credenciales.
 
-1. En el equipo Windows donde tengas instalado Winbox, pulsa **Descargar puente** y ejecuta el `.vbs` una vez. Se instala en `HKCU` (no requiere administrador), arranca en segundo plano y no abre ventanas de consola.
+1. En el equipo Windows donde tengas instalado Winbox, pulsa **Instalar o actualizar puente** y ejecuta el `.vbs` una vez. El instalador descarga un helper en PowerShell y un lanzador, se instala en `HKCU` (no requiere administrador), arranca en segundo plano y no abre ventanas de consola. No descarga ningún `.exe`.
 2. Vuelve a NetMonitor y pulsa **Abrir Winbox** o **SSH**. El navegador habla con el puente por `127.0.0.1`, así que no pide permiso para abrir un protocolo externo en cada clic.
 3. Si cambias de dominio o de URL de NetMonitor, vuelve a instalar el puente para actualizar el servidor incrustado.
 

@@ -25,12 +25,14 @@ export default function DeviceAccessButtons({
   const [notice, setNotice] = useState('')
   const [bridgeKind, setBridgeKind] = useState<'' | 'winbox' | 'ssh'>('')
   const [bridgeUrl, setBridgeUrl] = useState('')
+  const [bridgeOutdated, setBridgeOutdated] = useState(false)
 
   useEffect(() => {
     setError('')
     setNotice('')
     setBridgeKind('')
     setBridgeUrl('')
+    setBridgeOutdated(false)
     if (access !== undefined) {
       setLoading(false)
       return
@@ -90,6 +92,21 @@ export default function DeviceAccessButtons({
     }
   }
 
+  const bridgeIsOutdated = async (): Promise<boolean> => {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 1200)
+    try {
+      const response = await fetch('http://127.0.0.1:47821/health', { cache: 'no-store', signal: controller.signal })
+      if (!response.ok) return false
+      const data = await response.json()
+      return !!data?.version && String(data.version) !== '2'
+    } catch {
+      return false
+    } finally {
+      window.clearTimeout(timeout)
+    }
+  }
+
   const openBridge = async (kind: 'winbox' | 'ssh') => {
     if (!deviceId) return
     setBusy(kind)
@@ -97,7 +114,13 @@ export default function DeviceAccessButtons({
     setNotice('')
     setBridgeKind('')
     setBridgeUrl('')
+    setBridgeOutdated(false)
     try {
+      if (await bridgeIsOutdated()) {
+        setBridgeKind(kind)
+        setBridgeOutdated(true)
+        return
+      }
       const data = await apiSend<{ url: string }>('/tools/winbox/ticket', 'POST', { device_id: deviceId, kind })
       const ticket = data.url.replace(/^netmonitor-winbox:\/\//, '')
       setBridgeUrl(data.url)
@@ -174,8 +197,12 @@ export default function DeviceAccessButtons({
       {error && <div className="form-error">{error}</div>}
       {bridgeKind && (
         <div className="access-hint">
-          El puente local no está activo. Instálalo para abrir {bridgeKind === 'ssh' ? 'SSH' : 'Winbox'} sin permisos del navegador.
-          <a href={bridgeUrl} className="tool-link">Usar el protocolo (puede pedir permiso)</a>
+          {bridgeOutdated
+            ? `El puente local es antiguo y todavía usa un ejecutable. Instala la versión nueva para reemplazarlo por el helper en PowerShell y abrir ${bridgeKind === 'ssh' ? 'SSH' : 'Winbox'}.`
+            : `El puente local no está activo. Instálalo para abrir ${bridgeKind === 'ssh' ? 'SSH' : 'Winbox'} sin permisos del navegador.`}
+          {!bridgeOutdated && bridgeUrl && (
+            <a href={bridgeUrl} className="tool-link">Usar el protocolo (puede pedir permiso)</a>
+          )}
           <Button size="sm" variant="secondary" onClick={() => void downloadBridge()}><Download size={13} /> Instalar puente</Button>
         </div>
       )}

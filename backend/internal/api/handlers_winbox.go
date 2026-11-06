@@ -3,11 +3,9 @@ package api
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -162,40 +160,20 @@ func (s *Server) downloadWinboxBridge(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(vbs))
 }
 
-// downloadWinboxInstallerPS1 is public on purpose: it only contains the local
-// bridge script and the public NetMonitor URL, never credentials. Keeping it
-// as a separate download avoids the Windows command-line length limit.
-func (s *Server) downloadWinbridgeExe(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimSpace(s.cfg.WinbridgePath)
-	if path == "" {
-		path = "/app/netmonitor-winbridge.exe"
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "el puente Windows no está incluido en esta imagen")
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="netmonitor-tools.exe"`)
-	w.Header().Set("Cache-Control", "no-store")
-	http.ServeContent(w, r, "netmonitor-tools.exe", info.ModTime(), f)
-}
-
-func (s *Server) downloadWinboxInstallerPS1(w http.ResponseWriter, r *http.Request) {
-	server := requestBaseURL(r)
-	bridge := strings.ReplaceAll(winboxBridgeScript, "__SERVER__", strings.ReplaceAll(server, "'", "''"))
-	bridgeB64 := base64.StdEncoding.EncodeToString([]byte(bridge))
-	installer := strings.ReplaceAll(winboxBridgeInstaller, "__BRIDGE_B64__", bridgeB64)
-
+// downloadWinboxBridgePS1 is public on purpose: it only contains the local
+// helper script and the public NetMonitor URL, never credentials.
+func (s *Server) downloadWinboxBridgePS1(w http.ResponseWriter, r *http.Request) {
+	server := strings.ReplaceAll(requestBaseURL(r), "'", "''")
+	script := strings.ReplaceAll(winboxBridgeScript, "__SERVER__", server)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(installer))
+	_, _ = w.Write([]byte(script))
+}
+
+func (s *Server) downloadWinboxLauncherVBS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(winboxLauncherVBS))
 }
 
 func requestBaseURL(r *http.Request) string {
@@ -225,20 +203,49 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+const winboxLauncherVBS = `Set shell = CreateObject("WScript.Shell")
+q = Chr(34)
+script = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\NetMonitor\netmonitor-helper.ps1"
+If WScript.Arguments.Count > 0 Then
+  cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q & script & q & " " & q & WScript.Arguments(0) & q
+Else
+  cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q & script & q & " -Serve"
+End If
+shell.Run cmd, 0, False
+`
+
 const winboxInstallerVBS = `Option Explicit
-Dim shell, fso, http, stream, dir, exePath, server, q, attempt
+Dim shell, fso, http, stream, dir, scriptPath, launcherPath, server, q, attempt, ok
+Dim wmi, procs, proc, health
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 server = "__SERVER__"
 dir = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\NetMonitor"
 If Not fso.FolderExists(dir) Then fso.CreateFolder(dir)
-exePath = dir & "\netmonitor-tools.exe"
+scriptPath = dir & "\netmonitor-helper.ps1"
+launcherPath = dir & "\netmonitor-helper.vbs"
 q = Chr(34)
 On Error Resume Next
-shell.Run "taskkill /IM netmonitor-tools.exe /F", 0, True
+Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+Set procs = wmi.ExecQuery("SELECT Name, ProcessId, CommandLine FROM Win32_Process WHERE Name='powershell.exe' OR Name='netmonitor-tools.exe'")
+For Each proc In procs
+  If InStr(1, LCase("" & proc.CommandLine), "\netmonitor\netmonitor-helper.ps1", 1) > 0 Then proc.Terminate
+  If LCase("" & proc.Name) = "netmonitor-tools.exe" Then proc.Terminate
+Next
+If fso.FileExists(dir & "\netmonitor-tools.exe") Then fso.DeleteFile dir & "\netmonitor-tools.exe", True
+If fso.FileExists(dir & "\netmonitor-winbridge.exe") Then fso.DeleteFile dir & "\netmonitor-winbridge.exe", True
+If fso.FileExists(dir & "\winbox-bridge.ps1") Then fso.DeleteFile dir & "\winbox-bridge.ps1", True
+If fso.FileExists(dir & "\winbox-bridge.vbs") Then fso.DeleteFile dir & "\winbox-bridge.vbs", True
+If fso.FileExists(dir & "\server.txt") Then fso.DeleteFile dir & "\server.txt", True
+Err.Clear
+
 Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+If Err.Number <> 0 Then
+  MsgBox "No se pudo iniciar la descarga del puente: " & Err.Description, 16, "NetMonitor"
+  WScript.Quit 1
+End If
 http.SetProxy 1
-http.Open "GET", server & "/api/v1/tools/winbox/bridge.exe", False
+http.Open "GET", server & "/api/v1/tools/winbox/bridge.ps1", False
 http.Send
 If Err.Number <> 0 Then
   MsgBox "No se pudo descargar el puente: " & Err.Description, 16, "NetMonitor"
@@ -252,29 +259,61 @@ Set stream = CreateObject("ADODB.Stream")
 stream.Type = 1
 stream.Open
 stream.Write http.ResponseBody
-stream.SaveToFile exePath, 2
+stream.SaveToFile scriptPath, 2
 stream.Close
 If Err.Number <> 0 Then
   MsgBox "No se pudo guardar el puente: " & Err.Description, 16, "NetMonitor"
   WScript.Quit 1
 End If
-On Error GoTo 0
-Dim text
-Set text = fso.CreateTextFile(dir & "\server.txt", True)
-text.Write server
-text.Close
-If fso.FileExists(dir & "\winbox-bridge.ps1") Then fso.DeleteFile dir & "\winbox-bridge.ps1", True
-If fso.FileExists(dir & "\winbox-bridge.vbs") Then fso.DeleteFile dir & "\winbox-bridge.vbs", True
-shell.RegWrite "HKCU\Software\Microsoft\Windows\CurrentVersion\Run\NetMonitorAccessBridge", q & exePath & q & " --serve", "REG_SZ"
+Err.Clear
+
+Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+http.SetProxy 1
+http.Open "GET", server & "/api/v1/tools/winbox/launcher.vbs", False
+http.Send
+If Err.Number <> 0 Then
+  MsgBox "No se pudo descargar el lanzador: " & Err.Description, 16, "NetMonitor"
+  WScript.Quit 1
+End If
+If http.Status <> 200 Then
+  MsgBox "No se pudo descargar el lanzador (HTTP " & http.Status & ").", 16, "NetMonitor"
+  WScript.Quit 1
+End If
+Set stream = CreateObject("ADODB.Stream")
+stream.Type = 1
+stream.Open
+stream.Write http.ResponseBody
+stream.SaveToFile launcherPath, 2
+stream.Close
+If Err.Number <> 0 Then
+  MsgBox "No se pudo guardar el lanzador: " & Err.Description, 16, "NetMonitor"
+  WScript.Quit 1
+End If
+Err.Clear
+
+shell.RegWrite "HKCU\Software\Microsoft\Windows\CurrentVersion\Run\NetMonitorAccessBridge", q & "wscript.exe" & q & " //B //NoLogo " & q & launcherPath & q, "REG_SZ"
 Register "netmonitor-winbox"
 Register "netmonitor-tools"
-WScript.Sleep 800
-For attempt = 1 To 10
-  shell.Run q & exePath & q & " --serve", 0, False
+shell.Run q & "wscript.exe" & q & " //B //NoLogo " & q & launcherPath & q, 0, False
+Err.Clear
+
+ok = False
+For attempt = 1 To 12
   WScript.Sleep 500
-  If IsRunning("netmonitor-tools.exe") Then Exit For
+  Set health = CreateObject("WinHttp.WinHttpRequest.5.1")
+  health.SetProxy 1
+  health.Open "GET", "http://127.0.0.1:47821/health", False
+  health.Send
+  If Err.Number = 0 Then
+    If health.Status = 200 Then
+      ok = True
+      Exit For
+    End If
+  End If
+  Err.Clear
 Next
-If IsRunning("netmonitor-tools.exe") Then
+On Error GoTo 0
+If ok Then
   MsgBox "Puente de accesos instalado. Vuelve a NetMonitor y pulsa Winbox o SSH.", 64, "NetMonitor"
 Else
   MsgBox "El puente se instaló, pero no se pudo iniciar. Cierra sesión y vuelve a entrar, o ejecuta de nuevo este instalador.", 48, "NetMonitor"
@@ -284,19 +323,11 @@ Sub Register(scheme)
   base = "HKCU\Software\Classes\" & scheme
   shell.RegWrite base & "\", "URL:NetMonitor Access Bridge", "REG_SZ"
   shell.RegWrite base & "\URL Protocol", "", "REG_SZ"
-  shell.RegWrite base & "\shell\open\command\", q & exePath & q & " " & q & "%1" & q, "REG_SZ"
+  shell.RegWrite base & "\shell\open\command\", q & "wscript.exe" & q & " //B //NoLogo " & q & launcherPath & q & " " & q & "%1" & q, "REG_SZ"
 End Sub
-Function IsRunning(processName)
-  Dim wmi, processes
-  On Error Resume Next
-  Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-  Set processes = wmi.ExecQuery("SELECT Name FROM Win32_Process WHERE Name='" & processName & "'")
-  IsRunning = (processes.Count > 0)
-  On Error GoTo 0
-End Function
 `
 
-const winboxBridgeScript = `param([string]$LaunchUri)
+const winboxBridgeScript = `param([string]$LaunchUri = '', [switch]$Serve)
 $ErrorActionPreference = 'Stop'
 $server = '__SERVER__'
 $server = $server.Replace('://localhost', '://127.0.0.1')
@@ -308,15 +339,21 @@ function Write-BridgeLog([string]$Message) {
   try { Add-Content -Path $logPath -Value ((Get-Date).ToString('s') + ' ' + $Message) -Encoding UTF8 } catch {}
 }
 
-function Show-BridgeMessage([string]$Message, [string]$Title) {
-  Add-Type -AssemblyName System.Windows.Forms
-  [System.Windows.Forms.MessageBox]::Show($Message, $Title, 'OK', 'Information') | Out-Null
-}
-
 function Show-BridgeError([string]$Message) {
   Write-BridgeLog ('ERROR ' + $Message)
   Add-Type -AssemblyName System.Windows.Forms
   [System.Windows.Forms.MessageBox]::Show($Message, 'NetMonitor', 'OK', 'Error') | Out-Null
+}
+
+function Focus-Process($Process) {
+  if (-not $Process) { return }
+  try {
+    Start-Sleep -Milliseconds 700
+    $shell = New-Object -ComObject WScript.Shell
+    [void]$shell.AppActivate($Process.Id)
+  } catch {
+    Write-BridgeLog ('focus error: ' + $_.Exception.Message)
+  }
 }
 
 function Quote-Arg([string]$Value) {
@@ -423,7 +460,10 @@ function Start-Winbox($Response) {
   $startInfo.UseShellExecute = $false
   $startInfo.WorkingDirectory = Split-Path $winbox -Parent
   $process = [System.Diagnostics.Process]::Start($startInfo)
-  if ($process) { Write-BridgeLog ('winbox started pid=' + $process.Id) }
+  if ($process) {
+    Write-BridgeLog ('winbox started pid=' + $process.Id)
+    Focus-Process $process
+  }
 }
 
 function Start-Ssh($Response) {
@@ -436,7 +476,8 @@ function Start-Ssh($Response) {
   if ($putty) {
     $arguments = '-ssh -P ' + [string]$port + ' -l ' + (Quote-Arg $user) + ' -pw ' + (Quote-Arg $password) + ' ' + (Quote-Arg $address)
     Write-BridgeLog ('ssh path=' + $putty + ' args=' + (Redact-Args $arguments $password))
-    Start-Process -FilePath $putty -ArgumentList $arguments
+    $process = Start-Process -FilePath $putty -ArgumentList $arguments -PassThru
+    Focus-Process $process
     return
   }
   $ssh = Find-Ssh
@@ -444,8 +485,8 @@ function Start-Ssh($Response) {
     try { Set-Clipboard -Value $password } catch {}
     $arguments = '-p ' + [string]$port + ' ' + (Quote-Arg ($user + '@' + $address))
     Write-BridgeLog ('ssh path=' + $ssh + ' args=' + $arguments)
-    Start-Process -FilePath $ssh -ArgumentList $arguments
-    Show-BridgeMessage 'No se encontro PuTTY. Se abrio OpenSSH y la contrasena se copio al portapapeles. Pegala cuando se solicite.' 'NetMonitor - SSH'
+    $process = Start-Process -FilePath $ssh -ArgumentList $arguments -PassThru
+    Focus-Process $process
     return
   }
   throw 'No se encontro PuTTY ni OpenSSH. Instala PuTTY o activa el cliente OpenSSH de Windows.'
@@ -467,16 +508,9 @@ function Start-Web($Response) {
   Start-Process $url
 }
 
-try {
-  $ticket = ''
-  if ($LaunchUri -match '^netmonitor-winbox://([A-Za-z0-9]+)/?$') {
-    $ticket = $Matches[1]
-  } elseif ($LaunchUri -match '^netmonitor-tools://([a-z]+)/([A-Za-z0-9]+)/?$') {
-    $ticket = $Matches[2]
-  } else {
-    throw 'El enlace de acceso no es valido.'
-  }
-  $body = @{ ticket = $ticket } | ConvertTo-Json -Compress
+function Invoke-BridgeLaunch([string]$Ticket) {
+  if (-not $Ticket) { throw 'ticket vacio.' }
+  $body = @{ ticket = $Ticket } | ConvertTo-Json -Compress
   Add-Type -AssemblyName System.Net.Http
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $handler = New-Object System.Net.Http.HttpClientHandler
@@ -489,46 +523,93 @@ try {
     if (-not $result.IsSuccessStatusCode) { throw ('NetMonitor respondio ' + [int]$result.StatusCode) }
     $json = $result.Content.ReadAsStringAsync().GetAwaiter().GetResult()
     $payload = $json | ConvertFrom-Json
-    $response = $payload.data
-    if (-not $response) { throw 'NetMonitor devolvio una respuesta no valida.' }
+    $data = $payload.data
+    if (-not $data) { throw 'NetMonitor devolvio una respuesta no valida.' }
   } finally {
     $client.Dispose()
   }
-  Write-BridgeLog ('ticket kind=' + [string]$response.kind + ' address=' + [string]$response.address + ' user=' + [string]$response.username + ' passLen=' + ([string]$response.password).Length + ' port=' + [string]$response.port)
-  switch ([string]$response.kind) {
-    'ssh' { Start-Ssh $response }
-    'web' { Start-Web $response }
-    default { Start-Winbox $response }
+  Write-BridgeLog ('ticket kind=' + [string]$data.kind + ' address=' + [string]$data.address + ' user=' + [string]$data.username + ' passLen=' + ([string]$data.password).Length + ' port=' + [string]$data.port)
+  switch ([string]$data.kind) {
+    'ssh' { Start-Ssh $data }
+    'web' { Start-Web $data }
+    default { Start-Winbox $data }
   }
+  return $data
+}
+
+function Write-BridgeJson($Response, [int]$Status, $Value) {
+  $json = $Value | ConvertTo-Json -Compress
+  $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+  $Response.StatusCode = $Status
+  $Response.ContentType = 'application/json'
+  $Response.ContentLength64 = $bytes.Length
+  $Response.OutputStream.Write($bytes, 0, $bytes.Length)
+  $Response.OutputStream.Close()
+}
+
+function Start-BridgeServer {
+  $listener = New-Object System.Net.HttpListener
+  $listener.Prefixes.Add('http://127.0.0.1:47821/')
+  try {
+    $listener.Start()
+  } catch {
+    Write-BridgeLog ('helper listen error: ' + $_.Exception.Message)
+    return
+  }
+  Write-BridgeLog 'helper listening on http://127.0.0.1:47821/'
+  while ($listener.IsListening) {
+    try { $context = $listener.GetContext() } catch { break }
+    $request = $context.Request
+    $response = $context.Response
+    $response.Headers.Add('Access-Control-Allow-Origin', '*')
+    $response.Headers.Add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    $response.Headers.Add('Access-Control-Allow-Headers', 'Content-Type, Access-Control-Request-Private-Network')
+    $response.Headers.Add('Access-Control-Allow-Private-Network', 'true')
+    try {
+      if ($request.HttpMethod -eq 'OPTIONS') {
+        $response.StatusCode = 204
+        $response.Close()
+        continue
+      }
+      if ($request.Url.AbsolutePath -eq '/health') {
+        Write-BridgeJson $response 200 @{ ok = $true; version = '2' }
+        continue
+      }
+      if ($request.Url.AbsolutePath -eq '/launch' -and $request.HttpMethod -eq 'POST') {
+        $reader = New-Object System.IO.StreamReader($request.InputStream, [Text.Encoding]::UTF8)
+        $raw = $reader.ReadToEnd()
+        $reader.Close()
+        $payload = $raw | ConvertFrom-Json
+        $result = Invoke-BridgeLaunch ([string]$payload.ticket)
+        Write-BridgeJson $response 200 @{ ok = $true; kind = [string]$result.kind }
+        continue
+      }
+      Write-BridgeJson $response 404 @{ ok = $false; error = 'not found' }
+    } catch {
+      Write-BridgeLog ('helper request error: ' + $_.Exception.Message)
+      try { Write-BridgeJson $response 400 @{ ok = $false; error = $_.Exception.Message } } catch {}
+    }
+  }
+  $listener.Stop()
+  $listener.Close()
+}
+
+if ($Serve) {
+  Start-BridgeServer
+  exit
+}
+
+try {
+  $ticket = ''
+  if ($LaunchUri -match '^netmonitor-winbox://([A-Za-z0-9]+)/?$') {
+    $ticket = $Matches[1]
+  } elseif ($LaunchUri -match '^netmonitor-tools://([a-z]+)/([A-Za-z0-9]+)/?$') {
+    $ticket = $Matches[2]
+  } else {
+    throw 'El enlace de acceso no es valido.'
+  }
+  Invoke-BridgeLaunch $ticket | Out-Null
 } catch {
   Show-BridgeError $_.Exception.Message
 }
-`
-
-const winboxBridgeInstaller = `$ErrorActionPreference = 'Stop'
-$installDir = Join-Path $env:LOCALAPPDATA 'NetMonitor'
-New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-$bridgePath = Join-Path $installDir 'winbox-bridge.ps1'
-$launcherPath = Join-Path $installDir 'winbox-bridge.vbs'
-$bridge = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__BRIDGE_B64__'))
-Set-Content -Path $bridgePath -Value $bridge -Encoding UTF8
-$launcher = @'
-Set shell = CreateObject("WScript.Shell")
-If WScript.Arguments.Count = 0 Then WScript.Quit 1
-script = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\NetMonitor\winbox-bridge.ps1"
-cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & script & Chr(34) & " " & Chr(34) & WScript.Arguments(0) & Chr(34)
-shell.Run cmd, 0, False
-'@
-Set-Content -Path $launcherPath -Value $launcher -Encoding ASCII
-$command = 'wscript.exe //B //NoLogo "' + $launcherPath + '" "%1"'
-foreach ($scheme in @('netmonitor-winbox', 'netmonitor-tools')) {
-  $base = 'HKCU:\Software\Classes\' + $scheme
-  New-Item -Path $base -Force | Out-Null
-  Set-Item -Path $base -Value 'URL:NetMonitor Access Bridge'
-  New-ItemProperty -Path $base -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
-  New-Item -Path ($base + '\shell\open\command') -Force | Out-Null
-  Set-Item -Path ($base + '\shell\open\command') -Value $command
-}
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.MessageBox]::Show('Puente de accesos instalado. Vuelve a NetMonitor y pulsa Winbox o SSH.', 'NetMonitor') | Out-Null
 `
