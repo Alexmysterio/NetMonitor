@@ -406,8 +406,8 @@ export default function ImportsPage() {
               <CheckCircle2 size={15} />
               <div>
                 <b>Importación completada</b>
-                <span>{String(result.created_maps ?? 0)} mapas · {String(result.created_devices ?? 0)} equipos nuevos · {String(result.reused_devices ?? 0)} reutilizados · {String(result.device_types_assigned ?? 0)} con tipo · {String(result.probes_added ?? 0)} sondas · {String(result.created_submaps ?? 0)} submapas · {String(result.created_decorations ?? 0)} decoraciones.</span>
-                <span>{String(result.created_links ?? 0)} enlaces · {String(result.links_monitored ?? 0)} monitorizados · {String(result.skipped_links ?? 0)} omitidos · {String(result.routeros_credentials_assigned ?? 0)} equipos con credenciales · {String(result.snmp_assigned ?? 0)} con perfil SNMP · {String(result.snmp_profiles_created ?? 0)} perfiles SNMP creados.</span>
+                <span>Mapas: {String(result.created_maps ?? 0)} · Equipos nuevos: {String(result.created_devices ?? 0)} · Reutilizados: {String(result.reused_devices ?? 0)} · Con tipo: {String(result.device_types_assigned ?? 0)} · Sondas: {String(result.probes_added ?? 0)} · Submapas: {String(result.created_submaps ?? 0)} · Decoraciones: {String(result.created_decorations ?? 0)}.</span>
+                <span>Enlaces: {String(result.created_links ?? 0)} · Monitorizados: {String(result.links_monitored ?? 0)} · Omitidos: {String(result.skipped_links ?? 0)} · Credenciales asignadas: {String(result.routeros_credentials_assigned ?? 0)} · Con perfil SNMP: {String(result.snmp_assigned ?? 0)} · Perfiles SNMP creados: {String(result.snmp_profiles_created ?? 0)}.</span>
                 {Array.isArray(result.warnings) && (result.warnings as string[]).map((w, i) => <span key={i}>{w}</span>)}
               </div>
             </div>
