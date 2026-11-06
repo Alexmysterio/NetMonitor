@@ -58,11 +58,13 @@ func decryptDudePreviewSecrets(preview *dude.Preview) []string {
 		plain, err := secure.Decrypt(d.PasswordEncrypted)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("No se pudo descifrar la credencial de %s.", d.Name))
+			d.PasswordDecryptFailed = true
 			d.PasswordEncrypted = ""
 			d.HasPassword = false
 			continue
 		}
 		d.Password = plain
+		d.PasswordDecryptFailed = false
 		d.HasPassword = plain != ""
 		d.PasswordEncrypted = ""
 	}
@@ -74,11 +76,13 @@ func decryptDudePreviewSecrets(preview *dude.Preview) []string {
 		plain, err := secure.Decrypt(p.CommunityEncrypted)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("No se pudo descifrar la community SNMP de %s.", p.Name))
+			p.CommunityDecryptFailed = true
 			p.CommunityEncrypted = ""
 			p.HasCommunity = false
 			continue
 		}
 		p.Community = plain
+		p.CommunityDecryptFailed = false
 		p.HasCommunity = plain != ""
 		p.CommunityEncrypted = ""
 	}

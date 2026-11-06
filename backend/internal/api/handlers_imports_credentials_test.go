@@ -229,6 +229,27 @@ func TestDudeCredentialBaseNameReused(t *testing.T) {
 	}
 }
 
+func TestDudeCredentialMayOverwrite(t *testing.T) {
+	cases := []struct {
+		name      string
+		password  string
+		overwrite bool
+		want      bool
+	}{
+		{"empty without overwrite", "", false, false},
+		{"empty with overwrite", "", true, false},
+		{"password without overwrite", "secret", false, false},
+		{"password with overwrite", "secret", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dudeCredentialMayOverwrite(tc.password, tc.overwrite); got != tc.want {
+				t.Fatalf("dudeCredentialMayOverwrite(%q, %v) = %v, want %v", tc.password, tc.overwrite, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDudeCredentialEnsureEmptyGroups(t *testing.T) {
 	created, reused, assigned, skipped, warnings, err := ensureDudeRouterOSCredentials(nil, nil, nil, false, "dude.db")
 	if err != nil || created != 0 || reused != 0 || assigned != 0 || skipped != 0 || len(warnings) != 0 {

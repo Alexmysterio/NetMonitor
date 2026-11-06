@@ -723,7 +723,7 @@ func (s *Server) applyDudeImport(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			deviceID := deviceIDs[d.SourceID]
-			if deviceID == "" || strings.TrimSpace(d.Username) == "" {
+			if deviceID == "" || strings.TrimSpace(d.Username) == "" || d.PasswordDecryptFailed {
 				continue
 			}
 			credentialDevices = append(credentialDevices, dudeCredentialDevice{

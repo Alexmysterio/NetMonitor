@@ -97,6 +97,19 @@ func dudeSNMPProfileMatches(p dude.SNMPProfile, existing dudeSNMPExistingProfile
 		p.Community == existing.community
 }
 
+// dudeSNMPSkipWarning reports whether a profile must be skipped and the
+// user-facing warning to emit. Undecryptable communities are always skipped,
+// even for versions that would otherwise tolerate an empty community.
+func dudeSNMPSkipWarning(p dude.SNMPProfile) (string, bool) {
+	if p.CommunityDecryptFailed {
+		return fmt.Sprintf("Perfil SNMP %q omitido: no se pudo descifrar su community.", dudeSNMPProfileName(p)), true
+	}
+	if (p.Version == "v1" || p.Version == "v2c") && p.Community == "" {
+		return fmt.Sprintf("Perfil SNMP %q sin community para %s; se omite.", dudeSNMPProfileName(p), p.Version), true
+	}
+	return "", false
+}
+
 func dudeSNMPProfileTargetName(p dude.SNMPProfile, existing map[string]dudeSNMPExistingProfile) (string, dudeSNMPExistingProfile, bool, error) {
 	base := dudeSNMPProfileName(p)
 	baseExisting, baseFound := existing[strings.ToLower(base)]
@@ -231,8 +244,8 @@ func ensureDudeSNMPProfiles(ctx context.Context, tx pgx.Tx, profiles []dude.SNMP
 		if !needed[p.SourceID] {
 			continue
 		}
-		if (p.Version == "v1" || p.Version == "v2c") && p.Community == "" {
-			warnings = append(warnings, fmt.Sprintf("Perfil SNMP %q sin community para %s; se omite.", dudeSNMPProfileName(p), p.Version))
+		if warning, skip := dudeSNMPSkipWarning(p); skip {
+			warnings = append(warnings, warning)
 			continue
 		}
 

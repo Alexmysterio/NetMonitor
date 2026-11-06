@@ -43,24 +43,26 @@ type Device struct {
 	Height      float64  `json:"height"`
 	Tags        []string `json:"tags"`
 
-	Username            string `json:"username"`
-	Password            string `json:"-"`
-	PasswordEncrypted   string `json:"password_encrypted,omitempty"`
-	HasPassword         bool   `json:"has_password"`
-	SNMPProfileSourceID string `json:"snmp_profile_source_id"`
-	SNMPProfileName     string `json:"snmp_profile_name"`
+	Username              string `json:"username"`
+	Password              string `json:"-"`
+	PasswordEncrypted     string `json:"password_encrypted,omitempty"`
+	PasswordDecryptFailed bool   `json:"-"`
+	HasPassword           bool   `json:"has_password"`
+	SNMPProfileSourceID   string `json:"snmp_profile_source_id"`
+	SNMPProfileName       string `json:"snmp_profile_name"`
 }
 
 type SNMPProfile struct {
-	SourceID           string `json:"source_id"`
-	Name               string `json:"name"`
-	Version            string `json:"version"`
-	Port               int    `json:"port"`
-	TimeoutMS          int    `json:"timeout_ms"`
-	Retries            int    `json:"retries"`
-	Community          string `json:"-"`
-	CommunityEncrypted string `json:"community_encrypted,omitempty"`
-	HasCommunity       bool   `json:"has_community"`
+	SourceID               string `json:"source_id"`
+	Name                   string `json:"name"`
+	Version                string `json:"version"`
+	Port                   int    `json:"port"`
+	TimeoutMS              int    `json:"timeout_ms"`
+	Retries                int    `json:"retries"`
+	Community              string `json:"-"`
+	CommunityEncrypted     string `json:"community_encrypted,omitempty"`
+	CommunityDecryptFailed bool   `json:"-"`
+	HasCommunity           bool   `json:"has_community"`
 }
 
 type Link struct {

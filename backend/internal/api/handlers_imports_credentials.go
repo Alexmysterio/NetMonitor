@@ -161,6 +161,10 @@ func dudeRouterOSCredentialMatches(g dudeCredentialGroup, existing dudeRouterOSE
 		g.Password == existing.password
 }
 
+func dudeCredentialMayOverwrite(password string, overwrite bool) bool {
+	return overwrite && password != ""
+}
+
 // dudeCredentialTargetName chooses between the base and hashed name for a
 // group. It returns the existing profile when the chosen name is already in
 // use, so the caller can reuse it or report a conflict.
@@ -333,7 +337,7 @@ func ensureDudeRouterOSCredentials(ctx context.Context, tx pgx.Tx, groups []dude
 			}
 			var ct pgconn.CommandTag
 			var updateErr error
-			if overwrite {
+			if dudeCredentialMayOverwrite(group.Password, overwrite) {
 				ct, updateErr = tx.Exec(ctx, `UPDATE devices SET routeros_credential_id=$2 WHERE id=$1`, device.DeviceID, credentialID)
 			} else {
 				ct, updateErr = tx.Exec(ctx, `UPDATE devices SET routeros_credential_id=$2 WHERE id=$1 AND routeros_credential_id IS NULL`, device.DeviceID, credentialID)

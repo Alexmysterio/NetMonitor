@@ -51,6 +51,9 @@ func TestEncryptSanitizeDecryptDudeSecrets(t *testing.T) {
 	if stored.SNMPProfiles[0].Community != "public" || !stored.SNMPProfiles[0].HasCommunity {
 		t.Fatalf("community was not restored: %+v", stored.SNMPProfiles[0])
 	}
+	if stored.Devices[0].PasswordDecryptFailed || stored.SNMPProfiles[0].CommunityDecryptFailed {
+		t.Fatalf("successful decryption left failure flags set: %+v", stored)
+	}
 }
 
 func TestEncryptDudePreviewSecretsEmptyValues(t *testing.T) {
@@ -91,7 +94,48 @@ func TestDecryptDudePreviewSecretsFailure(t *testing.T) {
 	if preview.Devices[0].Password != "" || preview.Devices[0].PasswordEncrypted != "" || preview.Devices[0].HasPassword {
 		t.Fatalf("device secret was not cleared: %+v", preview.Devices[0])
 	}
+	if !preview.Devices[0].PasswordDecryptFailed {
+		t.Fatalf("device decryption failure was not flagged: %+v", preview.Devices[0])
+	}
 	if preview.SNMPProfiles[0].Community != "" || preview.SNMPProfiles[0].CommunityEncrypted != "" || preview.SNMPProfiles[0].HasCommunity {
 		t.Fatalf("community was not cleared: %+v", preview.SNMPProfiles[0])
+	}
+	if !preview.SNMPProfiles[0].CommunityDecryptFailed {
+		t.Fatalf("community decryption failure was not flagged: %+v", preview.SNMPProfiles[0])
+	}
+}
+
+func TestDecryptDudePreviewSecretsClearsFailureFlagsOnSuccess(t *testing.T) {
+	secure.SetKey("test-key")
+	encryptedPassword, err := secure.Encrypt("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedCommunity, err := secure.Encrypt("public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := dude.Preview{
+		Devices: []dude.Device{{
+			Name:                  "R1",
+			PasswordEncrypted:     encryptedPassword,
+			PasswordDecryptFailed: true,
+			HasPassword:           true,
+		}},
+		SNMPProfiles: []dude.SNMPProfile{{
+			Name:                   "default",
+			CommunityEncrypted:     encryptedCommunity,
+			CommunityDecryptFailed: true,
+			HasCommunity:           true,
+		}},
+	}
+	if warnings := decryptDudePreviewSecrets(&preview); len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if preview.Devices[0].PasswordDecryptFailed || preview.SNMPProfiles[0].CommunityDecryptFailed {
+		t.Fatalf("successful decryption did not clear failure flags: %+v", preview)
+	}
+	if preview.Devices[0].Password != "secret" || preview.SNMPProfiles[0].Community != "public" {
+		t.Fatalf("secrets were not restored: %+v", preview)
 	}
 }

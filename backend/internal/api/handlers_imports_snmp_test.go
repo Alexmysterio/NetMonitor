@@ -109,6 +109,34 @@ func TestDudeSNMPProfileHashedNameReused(t *testing.T) {
 	}
 }
 
+func TestDudeSNMPSkipWarning(t *testing.T) {
+	base := dude.SNMPProfile{SourceID: "60", Name: "v2-public", Version: "v2c", Community: "public"}
+	if warning, skip := dudeSNMPSkipWarning(base); skip {
+		t.Fatalf("valid profile was skipped: %q", warning)
+	}
+
+	empty := base
+	empty.Community = ""
+	warning, skip := dudeSNMPSkipWarning(empty)
+	if !skip || warning != `Perfil SNMP "Dude · v2-public [60]" sin community para v2c; se omite.` {
+		t.Fatalf("unexpected empty-community result: skip=%v warning=%q", skip, warning)
+	}
+
+	failed := base
+	failed.CommunityDecryptFailed = true
+	warning, skip = dudeSNMPSkipWarning(failed)
+	if !skip || warning != `Perfil SNMP "Dude · v2-public [60]" omitido: no se pudo descifrar su community.` {
+		t.Fatalf("unexpected decrypt-failure result: skip=%v warning=%q", skip, warning)
+	}
+
+	v3Empty := base
+	v3Empty.Version = "v3"
+	v3Empty.Community = ""
+	if warning, skip := dudeSNMPSkipWarning(v3Empty); skip {
+		t.Fatalf("v3 profile without secrets should be kept: %q", warning)
+	}
+}
+
 func TestDudeDeviceSNMPProfileSourceID(t *testing.T) {
 	profiles := []dude.SNMPProfile{
 		{SourceID: "60", Name: "v2-public"},
